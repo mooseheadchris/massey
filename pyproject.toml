@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+# Lets `pytest` run from the repo root without installing the package.
+pythonpath = ["."]
+testpaths = ["tests"]

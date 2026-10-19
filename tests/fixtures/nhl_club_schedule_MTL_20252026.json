@@ -1,0 +1,50 @@
+{
+  "previousSeason": 20242025,
+  "currentSeason": 20252026,
+  "clubTimezone": "America/Montreal",
+  "clubUTCOffset": "-04:00",
+  "games": [
+    {
+      "id": 2025020001,
+      "season": 20252026,
+      "gameType": 2,
+      "gameDate": "2025-10-08",
+      "startTimeUTC": "2025-10-08T23:00:00Z",
+      "venue": {"default": "Scotiabank Arena"},
+      "neutralSite": false,
+      "gameState": "OFF",
+      "gameScheduleState": "OK",
+      "awayTeam": {"id": 8, "abbrev": "MTL", "score": 2},
+      "homeTeam": {"id": 10, "abbrev": "TOR", "score": 5},
+      "gameOutcome": {"lastPeriodType": "REG"}
+    },
+    {
+      "id": 2025020002,
+      "season": 20252026,
+      "gameType": 2,
+      "gameDate": "2025-10-11",
+      "startTimeUTC": "2025-10-11T23:00:00Z",
+      "venue": {"default": "Bell Centre"},
+      "neutralSite": false,
+      "gameState": "OFF",
+      "gameScheduleState": "OK",
+      "awayTeam": {"id": 10, "abbrev": "TOR", "score": 4},
+      "homeTeam": {"id": 8, "abbrev": "MTL", "score": 3},
+      "gameOutcome": {"lastPeriodType": "OT"}
+    },
+    {
+      "id": 2025020007,
+      "season": 20252026,
+      "gameType": 2,
+      "gameDate": "2025-10-18",
+      "startTimeUTC": "2025-10-18T23:00:00Z",
+      "venue": {"default": "Bell Centre"},
+      "neutralSite": false,
+      "gameState": "OFF",
+      "gameScheduleState": "OK",
+      "awayTeam": {"id": 6, "abbrev": "BOS", "score": 0},
+      "homeTeam": {"id": 8, "abbrev": "MTL", "score": 1},
+      "gameOutcome": {"lastPeriodType": "REG"}
+    }
+  ]
+}

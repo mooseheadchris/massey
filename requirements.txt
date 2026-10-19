@@ -1,0 +1,14 @@
+# Core solver
+numpy>=1.26
+scipy>=1.11          # only for the 1-D logistic calibration fit in backtest.py
+
+# Data handling
+pandas>=2.2
+pyarrow>=15          # required by polars' .to_pandas() and by the parquet cache
+
+# League data sources
+nflreadpy>=0.1.5     # NFL schedules (pulls in polars)
+nhl-api-py==3.3.0    # NHL api-web.nhle.com wrapper, imported as `nhlpy`
+
+# Tests
+pytest>=8.0
