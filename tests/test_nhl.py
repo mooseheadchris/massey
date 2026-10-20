@@ -347,11 +347,38 @@ def test_a_transient_failure_is_retried(tmp_path: Path, monkeypatch):
     assert len(attempts) == 3
 
 
+def test_preseason_games_are_excluded(nhl_cache: Path):
+    # A club's schedule opens with preseason exhibitions (gameType 1). They are
+    # not competitive results and must never reach the ratings.
+    games = nhl.load_games(2025, cache_dir=nhl_cache, teams=["TOR", "MTL"])
+
+    assert "2025010010" not in {game.game_id for game in games}
+    assert "OTT" not in {game.home for game in games} | {game.away for game in games}
+
+
 def test_inspect_season_reports_resolved_fields(nhl_cache: Path):
     report = nhl.inspect_season(2025, cache_dir=nhl_cache)
 
     assert report["season"] == "20252026"
-    assert report["n_games"] == 7
-    assert report["game_states"] == {"FINAL": 1, "FUT": 1, "LIVE": 1, "OFF": 4}
+    assert report["n_games"] == 8
+    assert report["game_states"] == {"FINAL": 2, "FUT": 1, "LIVE": 1, "OFF": 4}
+    # One preseason, six regular season, one playoff.
+    assert report["game_types"] == {"1": 1, "2": 6, "3": 1}
+    # The unplayed and in-progress games carry no outcome yet.
+    assert report["outcome_types"] == {"<missing>": 2, "OT": 2, "REG": 3, "SO": 1}
     assert report["sample_resolved_fields"]["home_abbrev"] == "TOR"
     assert report["sample_resolved_fields"]["outcome"] == "REG"
+
+
+def test_inspect_season_samples_a_regular_season_game(nhl_cache: Path):
+    # The first played game in the fixture is a preseason exhibition. Showing
+    # that as the representative sample would misreport what gets rated.
+    report = nhl.inspect_season(2025, cache_dir=nhl_cache)
+
+    assert report["sample_resolved_fields"]["game_type"] == "2"
+    assert report["sample_resolved_fields"]["game_id"] == "2025020001"
+
+
+def test_unreadable_game_type_excludes_the_game_without_raising():
+    assert nhl._to_record({"id": 1, "gameType": "exhibition"}, {2}) is None
+    assert nhl._to_record({"id": 1}, {2}) is None

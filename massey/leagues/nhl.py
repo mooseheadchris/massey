@@ -69,6 +69,11 @@ OUTCOME_ALIASES: dict[str, str] = {
     "SHOOTOUT": "SO",
 }
 
+#: ``gameType`` for preseason games. A club's season schedule includes these,
+#: and they are never rated: they are exhibitions, and the opponent is not
+#: always an NHL club (the league has played European teams in preseason).
+PRESEASON_GAME_TYPE = 1
+
 #: ``gameType`` for regular-season games.
 REGULAR_SEASON_GAME_TYPE = 2
 
@@ -76,6 +81,8 @@ REGULAR_SEASON_GAME_TYPE = 2
 PLAYOFF_GAME_TYPE = 3
 
 #: ``gameState`` values that mean the game is over and the score is final.
+#: A completed season returns a mix of these -- ``"OFF"`` for games the league
+#: has finalised and ``"FINAL"`` for ones it has not yet archived.
 FINAL_GAME_STATES = frozenset({"OFF", "FINAL", "OVER"})
 
 #: Team whose schedule is fetched first to discover the league's teams. In the
@@ -349,6 +356,11 @@ def discover_team_abbrevs(
 
     found: set[str] = set()
     for game in payload.get("games", []):
+        # Regular-season games only. A preseason opponent is not necessarily an
+        # NHL club, and inventing a team code here would send us asking the API
+        # for a club schedule that does not exist.
+        if _game_type(game) != REGULAR_SEASON_GAME_TYPE:
+            continue
         for field in ("home_abbrev", "away_abbrev"):
             value = _dig(game, FIELD_PATHS[field])
             if value is not _MISSING:
@@ -488,13 +500,10 @@ def _to_record(game: dict, wanted_types: Iterable[int]) -> GameRecord | None:
     Returns:
         The record, or ``None`` if the game is the wrong type or not finished.
     """
-    game_type = _resolve(game, "game_type")
-    if int(game_type) not in set(wanted_types):
+    if _game_type(game) not in set(wanted_types):
         return None
 
-    home_score = _dig(game, FIELD_PATHS["home_score"])
-    away_score = _dig(game, FIELD_PATHS["away_score"])
-    if home_score is _MISSING or away_score is _MISSING or home_score is None or away_score is None:
+    if not _has_score(game):
         return None  # not played yet
 
     # Prefer the explicit state flag; fall back to "it has scores" if the API
@@ -503,6 +512,8 @@ def _to_record(game: dict, wanted_types: Iterable[int]) -> GameRecord | None:
     if state is not _MISSING and str(state).upper() not in FINAL_GAME_STATES:
         return None
 
+    home_score = int(_resolve(game, "home_score"))
+    away_score = int(_resolve(game, "away_score"))
     outcome = normalise_outcome(_resolve(game, "outcome"))
     neutral = _dig(game, FIELD_PATHS["neutral"])
 
@@ -511,10 +522,10 @@ def _to_record(game: dict, wanted_types: Iterable[int]) -> GameRecord | None:
         date=_parse_date(_resolve(game, "game_date")),
         home=str(_resolve(game, "home_abbrev")),
         away=str(_resolve(game, "away_abbrev")),
-        margin=margin_from_outcome(int(home_score), int(away_score), outcome),
+        margin=margin_from_outcome(home_score, away_score, outcome),
         neutral=bool(neutral) if neutral is not _MISSING else False,
-        home_score=int(home_score),
-        away_score=int(away_score),
+        home_score=home_score,
+        away_score=away_score,
         week=None,
         outcome=outcome,
     )
@@ -560,14 +571,18 @@ def inspect_season(
         "outcome_types": _counts(_dig(game, FIELD_PATHS["outcome"]) for game in games),
     }
 
-    for game in games:
-        resolved = {
-            field: _render(_dig(game, paths)) for field, paths in FIELD_PATHS.items()
+    # Show a regular-season game if there is one, since that is what actually
+    # gets rated; a club's schedule opens with preseason exhibitions.
+    played = [game for game in games if _has_score(game)]
+    sample = next(
+        (game for game in played if _game_type(game) == REGULAR_SEASON_GAME_TYPE),
+        played[0] if played else None,
+    )
+    if sample is not None:
+        report["sample_resolved_fields"] = {
+            field: _render(_dig(sample, paths)) for field, paths in FIELD_PATHS.items()
         }
-        if resolved["home_score"] not in ("<missing>", "None"):
-            report["sample_resolved_fields"] = resolved
-            report["sample_raw_game"] = game
-            break
+        report["sample_raw_game"] = sample
 
     return report
 
@@ -596,6 +611,35 @@ def _dig(payload: dict, paths: tuple[str, ...]) -> Any:
         if current is not _MISSING:
             return current
     return _MISSING
+
+
+def _has_score(game: dict) -> bool:
+    """Return whether both teams' scores are present, i.e. the game was played."""
+    return all(
+        _dig(game, FIELD_PATHS[field]) not in (_MISSING, None)
+        for field in ("home_score", "away_score")
+    )
+
+
+def _game_type(game: dict) -> int | None:
+    """Return a game's ``gameType`` as an int, or ``None`` if unreadable.
+
+    The API sends it as a number, but it is the field every filter hinges on,
+    so an unexpected value returns ``None`` (excluding the game) rather than
+    raising.
+
+    Args:
+        game: A raw game dict.
+
+    Returns:
+        The game type, or ``None``.
+    """
+    value = _dig(game, FIELD_PATHS["game_type"])
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        logger.warning("game %s has an unreadable gameType %r", game.get("id"), value)
+        return None
 
 
 def _resolve(game: dict, field: str) -> Any:

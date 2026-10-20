@@ -13,6 +13,11 @@ import pytest
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
+#: The team whose fixture schedule carries the preseason exhibition. Must match
+#: ``massey.leagues.nhl.SEED_TEAM``, since that is the schedule team discovery
+#: reads.
+SEED_TEAM_IN_FIXTURE = "TOR"
+
 #: A miniature NFL season using the real column names and values returned by
 #: ``nflreadpy.load_schedules()``, verified against a live 2025/2026 pull.
 #: Four teams, one unplayed game, one tie, one neutral-site blowout and one
@@ -63,6 +68,7 @@ def nhl_full_cache(tmp_path: Path) -> Path:
     from massey.leagues.nhl import NHL_TEAM_ABBREVS
 
     teams = list(NHL_TEAM_ABBREVS)
+    assert SEED_TEAM_IN_FIXTURE in teams
     strength = {team: 15.5 - index for index, team in enumerate(teams)}
     outcome_cycle = ["REG", "REG", "REG", "OT", "SO"]
 
@@ -91,6 +97,21 @@ def nhl_full_cache(tmp_path: Path) -> Path:
             }
         )
 
+    # A preseason exhibition against a European club, as the real schedules
+    # carry. Its opponent has no club schedule of its own, so team discovery
+    # must not pick the code up.
+    preseason = {
+        "id": 2025010001,
+        "season": 20252026,
+        "gameType": 1,
+        "gameDate": "2025-09-21",
+        "gameState": "FINAL",
+        "neutralSite": True,
+        "homeTeam": {"abbrev": "EBB", "score": 2},
+        "awayTeam": {"abbrev": SEED_TEAM_IN_FIXTURE, "score": 5},
+        "gameOutcome": {"lastPeriodType": "REG"},
+    }
+
     target = tmp_path / "raw" / "nhl"
     target.mkdir(parents=True)
     for team in teams:
@@ -99,6 +120,8 @@ def nhl_full_cache(tmp_path: Path) -> Path:
             for game in games
             if team in (game["homeTeam"]["abbrev"], game["awayTeam"]["abbrev"])
         ]
+        if team == SEED_TEAM_IN_FIXTURE:
+            involved = [preseason, *involved]
         path = target / f"club_schedule_{team}_20252026.json"
         path.write_text(json.dumps({"currentSeason": 20252026, "games": involved}))
 

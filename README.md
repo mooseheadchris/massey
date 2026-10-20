@@ -198,32 +198,42 @@ year to year. A ~10.7-point margin MAE is about what a pure
 points-differential model gets; closing that gap is what an efficiency model
 (EPA) would be for.
 
-No NHL figures are listed here because this project's NHL path has not yet been
-run against the live API — see below.
+No NHL figures are listed here yet: the field names are confirmed against a
+live payload, but no full season has been pulled and backtested.
 
 ## NHL payload shape
 
-`api-web.nhle.com` is free but undocumented, and the environment this project
-was built in had no network route to it. The NHL loader is therefore written
-against the documented `club-schedule-season` response shape and tested against
-hand-authored fixtures (`tests/fixtures/`), not against a recorded live
-response. **The first thing to do on a machine with API access is confirm the
-field names:**
+`api-web.nhle.com` is free but undocumented. The field names below have been
+confirmed against a live `club-schedule-season` response for the 2025-26
+season; the loader resolves all ten of the fields it needs from their primary
+paths, with no fallbacks required.
+
+If the API shape ever moves, this prints the payload's top-level keys, the
+per-game keys, the counts of each `gameState`, `gameType` and `lastPeriodType`,
+and the fields the loader resolved from one completed regular-season game:
 
 ```bash
 python -m massey.cli inspect --league nhl --season 2025
 ```
 
-That prints the payload's top-level keys, the per-game keys, the counts of each
-`gameState`, `gameType` and `lastPeriodType`, and the fields this code resolved
-from one completed game. The fields it expects are `id`, `gameType`,
-`gameDate`, `gameState`, `neutralSite`, `homeTeam.abbrev`, `homeTeam.score`,
-`awayTeam.abbrev`, `awayTeam.score` and `gameOutcome.lastPeriodType`.
+The fields used are `id`, `gameType`, `gameDate`, `gameState`, `neutralSite`,
+`homeTeam.abbrev`, `homeTeam.score`, `awayTeam.abbrev`, `awayTeam.score` and
+`gameOutcome.lastPeriodType`.
 
 Every read goes through `_resolve()` in `massey/leagues/nhl.py`, which tries a
 short list of known spellings and raises an error naming the keys it actually
 found. A renamed field fails loudly rather than producing a quietly wrong
 rating. If something has moved, add the new path to `FIELD_PATHS`.
+
+Two things the live payload confirmed, both of which the loader handles:
+
+- **`gameType` 1 is preseason**, and a club's season schedule includes those
+  games. They are never rated. They are also excluded from team discovery,
+  because a preseason opponent is not always an NHL club — the league has
+  played European teams in preseason, and taking a code like `EBB` for a real
+  team would send the loader after a club schedule that does not exist.
+- **A finished game's `gameState` is either `OFF` or `FINAL`**, depending on
+  whether the league has archived it. Both count as complete.
 
 Politeness, since the API is free and undocumented: one request per team with a
 one-second gap (`delay`), a descriptive `User-Agent`, a 20-second timeout, and
@@ -249,7 +259,7 @@ massey/
   leagues/nhl.py       api-web loading, outcome-points margins, defensive reads
   backtest.py          walk-forward evaluation and metrics
   cli.py               argument parsing, console tables, CSV/JSON output
-tests/                 149 tests; see below
+tests/                 154 tests; see below
 data/raw/              cached raw pulls (gitignored)
 output/                generated CSV and JSON (gitignored)
 ```
@@ -260,7 +270,7 @@ output/                generated CSV and JSON (gitignored)
 pytest -q
 ```
 
-149 tests, no network access required — the league tests seed the cache and run
+154 tests, no network access required — the league tests seed the cache and run
 the real loaders against it.
 
 - `test_massey.py` — the solver against a synthetic four-team league with known
@@ -280,7 +290,6 @@ the real loaders against it.
 
 ## Known limitations
 
-- **NHL field names are unverified** against a live response. See above.
 - **NFL neutral-site labelling** is taken from nflreadpy's `location` column as
   given. In some seasons it marks games that look like ordinary home games;
   that is the upstream data's call, and the loader does not second-guess it.

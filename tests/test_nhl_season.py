@@ -26,6 +26,24 @@ def test_team_discovery_finds_the_whole_league(nhl_full_cache: Path):
     assert teams == sorted(nhl.NHL_TEAM_ABBREVS)
 
 
+def test_team_discovery_ignores_preseason_opponents(nhl_full_cache: Path):
+    # The seed team's schedule opens with a preseason game against a European
+    # club. That club has no club schedule of its own, so picking its code up
+    # here would send the loader after a 404 and fail the whole season.
+    teams = nhl.discover_team_abbrevs(2025, cache_dir=nhl_full_cache)
+    assert "EBB" not in teams
+
+
+def test_preseason_games_are_never_rated(nhl_full_cache: Path):
+    games = nhl.load_games(2025, cache_dir=nhl_full_cache)
+
+    assert len(games) == EXPECTED_GAMES  # the exhibition is not among them
+    assert "EBB" not in {game.home for game in games} | {game.away for game in games}
+    # Not even with --include-playoffs, which widens to the postseason only.
+    widened = nhl.load_games(2025, cache_dir=nhl_full_cache, include_playoffs=True)
+    assert "2025010001" not in {game.game_id for game in widened}
+
+
 def test_games_are_deduplicated_across_club_schedules(nhl_full_cache: Path):
     # Each game appears in two clubs' schedules, so a naive concatenation would
     # double-count every one of them.
