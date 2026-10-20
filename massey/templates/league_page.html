@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Massey Power Ratings</title>
+<style>
+/* Layout: one column, summary before detail. Hairline-separated bands rather
+   than a grid of cards, so the ratings table is the visual centre of gravity.
+   Colors are the validated data-viz reference palette: a blue/red diverging
+   pair for ratings (CVD dE 21.6 light / 19.2 dark) over a neutral midpoint.
+   No green anywhere - green/red is indistinguishable to a deuteranope, so a
+   missed pick is marked by a glyph and a word, with red only ever meaning
+   "wrong". */
+:root {
+  color-scheme: light;
+  --plane: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-muted: #898781;
+  --rule: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --pos: #2a78d6;
+  --neg: #e34948;
+  --mid: #f0efec;
+  --miss: #d03b3b;
+  --focus: #2a78d6;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --ink-muted: #898781;
+    --rule: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --pos: #3987e5;
+    --neg: #e66767;
+    --mid: #383835;
+    --miss: #d03b3b;
+    --focus: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --ink-muted: #898781;
+  --rule: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --pos: #3987e5;
+  --neg: #e66767;
+  --mid: #383835;
+  --miss: #d03b3b;
+  --focus: #3987e5;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font: 15px/1.5 var(--font);
+}
+.wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 56px;
+}
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h1 { font-size: 1.5rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.0rem; letter-spacing: -0.005em; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+.num { font-variant-numeric: tabular-nums; }
+.eyebrow {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+/* ---- header ---- */
+header { border-bottom: 1px solid var(--rule); padding-block: 24px 20px; margin-bottom: 28px; }
+.titlerow { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+label.inline { display: inline-flex; gap: 6px; align-items: center; font-size: 0.8125rem; color: var(--ink-2); }
+select, button, input[type="search"] {
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+}
+button { cursor: pointer; }
+button:hover, select:hover { border-color: var(--axis); }
+.subtle { color: var(--ink-2); font-size: 0.8125rem; margin-top: 6px; }
+
+/* ---- stat tiles ---- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; margin-bottom: 32px; }
+.tile { background: var(--surface); padding: 14px 16px; min-width: 0; }
+.tile .v { font-size: 1.625rem; letter-spacing: -0.02em; margin-top: 4px; }
+.tile .u { font-size: 0.75rem; color: var(--ink-muted); }
+.tile .n { font-size: 0.75rem; color: var(--ink-2); margin-top: 3px; }
+
+section { margin-bottom: 34px; }
+.sechead { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+
+/* ---- matchup predictor ---- */
+.pick { display: flex; flex-wrap: wrap; gap: 12px 14px; align-items: flex-end; }
+.pick .f { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.pick .f > span { font-size: 0.75rem; color: var(--ink-muted); }
+.verdict { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--rule); display: flex; flex-wrap: wrap; gap: 20px 32px; align-items: baseline; }
+.verdict .big { font-size: 1.5rem; letter-spacing: -0.015em; }
+.probbar { height: 8px; border-radius: 4px; background: var(--mid); overflow: hidden; width: 180px; max-width: 100%; margin-top: 7px; }
+.probbar i { display: block; height: 100%; background: var(--pos); border-radius: 4px; }
+
+/* ---- chart ---- */
+.chartbox { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 10px 6px; }
+.chartbox svg { display: block; width: 100%; height: auto; }
+.tip {
+  position: absolute; pointer-events: none; opacity: 0; transition: opacity 0.1s;
+  background: var(--ink); color: var(--plane); font-size: 0.75rem; line-height: 1.35;
+  padding: 6px 8px; border-radius: 5px; white-space: nowrap; z-index: 5;
+}
+.tip.on { opacity: 1; }
+.bar { cursor: default; }
+
+/* ---- tables ---- */
+.scroller { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.875rem; }
+th, td { text-align: right; padding: 7px 10px; white-space: nowrap; border-bottom: 1px solid var(--rule); }
+th:first-child, td:first-child, th.l, td.l { text-align: left; }
+tbody tr:last-child td { border-bottom: 0; }
+thead th {
+  position: sticky; top: 0; background: var(--surface); z-index: 1;
+  font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--ink-muted); font-weight: 600; border-bottom: 1px solid var(--axis);
+}
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--ink); }
+th[aria-sort] { color: var(--ink); }
+th .arr { opacity: 0.45; font-size: 0.875em; }
+tbody tr:hover { background: var(--mid); }
+td.team { font-weight: 600; }
+.pos { color: var(--pos); }
+.neg { color: var(--neg); }
+.pill { display: inline-block; font-size: 0.6875rem; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--border); color: var(--ink-2); }
+.miss { color: var(--miss); font-weight: 600; }
+.hit { color: var(--ink-2); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.empty { padding: 28px 16px; text-align: center; color: var(--ink-2); font-size: 0.875rem; }
+footer { border-top: 1px solid var(--rule); padding-top: 16px; color: var(--ink-muted); font-size: 0.75rem; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 560px) {
+  .tile .v { font-size: 1.375rem; }
+  .verdict .big { font-size: 1.25rem; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="titlerow">
+    <div>
+      <div class="eyebrow" id="eyebrow">Massey least-squares ratings</div>
+      <h1 id="pagetitle">Power Ratings</h1>
+      <div class="subtle" id="window">&nbsp;</div>
+    </div>
+    <div class="controls">
+      <label class="inline">Season
+        <select id="season"></select>
+      </label>
+      <button id="loadbtn" type="button" title="Read a season JSON file written by the export command">Load season file…</button>
+      <button id="themebtn" type="button" aria-live="polite">Dark</button>
+      <input type="file" id="fileinput" accept="application/json,.json" hidden>
+    </div>
+  </div>
+</header>
+
+<div class="tiles" id="tiles"></div>
+
+<section id="predictor-section">
+  <div class="sechead">
+    <h2>Matchup predictor</h2>
+    <span class="subtle" id="predictor-note"></span>
+  </div>
+  <div class="panel">
+    <div class="pick">
+      <label class="f"><span>Home team</span><select id="home"></select></label>
+      <label class="f"><span>Away team</span><select id="away"></select></label>
+      <label class="inline"><input type="checkbox" id="neutral"> Neutral site</label>
+      <button id="swap" type="button">Swap</button>
+    </div>
+    <div class="verdict" id="verdict"></div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <h2>Ratings</h2>
+    <span class="subtle" id="chart-note"></span>
+  </div>
+  <div class="chartbox">
+    <svg id="chart" role="img" aria-labelledby="chart-title"></svg>
+    <title id="chart-title">Team ratings, strongest to weakest</title>
+    <div class="tip" id="tip"></div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <h2>Table</h2>
+    <span class="subtle">Click a column to sort.</span>
+  </div>
+  <div class="scroller">
+    <table id="ratings"><thead></thead><tbody></tbody></table>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <h2>Results</h2>
+    <span class="subtle" id="results-note"></span>
+  </div>
+  <div class="filters" style="margin-bottom:10px">
+    <label class="inline">Team <select id="f-team"></select></label>
+    <label class="inline">Picks <select id="f-pick">
+      <option value="all">All games</option>
+      <option value="hit">Correct picks</option>
+      <option value="miss">Missed picks</option>
+      <option value="scored">Backtested only</option>
+    </select></label>
+    <input type="search" id="f-search" placeholder="Filter by team code…" aria-label="Filter results by team code">
+  </div>
+  <div class="scroller">
+    <table id="results"><thead></thead><tbody></tbody></table>
+  </div>
+  <div class="subtle" id="results-count"></div>
+</section>
+
+<footer id="footer"></footer>
+</div>
+
+<script type="application/json" id="payload">__MASSEY_PAYLOAD__</script>
+<script>
+"use strict";
+
+const DATA = JSON.parse(document.getElementById("payload").textContent);
+const SEASONS = new Map(DATA.seasons.map(s => [s.season, s]));
+let current = DATA.seasons[0];
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+const fmt = (v, p = 2) => v === null || v === undefined ? "–" : (v >= 0 ? "+" : "") + v.toFixed(p);
+const plain = (v, p = 2) => v === null || v === undefined ? "–" : v.toFixed(p);
+const pct = v => v === null || v === undefined ? "–" : (v * 100).toFixed(1) + "%";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const signClass = v => v > 0 ? "pos" : v < 0 ? "neg" : "";
+
+function option(value, label) {
+  const o = document.createElement("option");
+  o.value = value;
+  o.textContent = label;
+  return o;
+}
+
+/* ---------- theme ---------- */
+function applyTheme(mode) {
+  if (mode) document.documentElement.setAttribute("data-theme", mode);
+  else document.documentElement.removeAttribute("data-theme");
+  const dark = mode === "dark" || (!mode && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  $("themebtn").textContent = dark ? "Light" : "Dark";
+  drawChart();
+}
+$("themebtn").addEventListener("click", () => {
+  const dark = document.documentElement.getAttribute("data-theme") === "dark" ||
+    (!document.documentElement.hasAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const next = dark ? "light" : "dark";
+  applyTheme(next);
+  try { localStorage.setItem("massey-theme", next); } catch (e) { /* private window */ }
+});
+try {
+  const saved = localStorage.getItem("massey-theme");
+  if (saved === "dark" || saved === "light") applyTheme(saved);
+} catch (e) { /* storage blocked; system theme applies */ }
+
+/* ---------- tiles ---------- */
+function renderTiles() {
+  const m = current.meta;
+  const b = current.backtest;
+  const units = current.margin_units;
+  const tiles = [
+    {
+      k: "Home-field advantage",
+      v: fmt(m.hfa, 2),
+      u: units,
+      n: "fitted, not assumed"
+    },
+    {
+      k: "Games fitted",
+      v: String(m.games_fitted),
+      u: m.neutral_games ? m.neutral_games + " at neutral sites" : "all at home venues",
+      n: m.first_date + " to " + m.last_date
+    },
+    {
+      k: "Ridge penalty",
+      v: String(m.ridge),
+      u: "on team ratings",
+      n: "in-sample MAE " + plain(m.in_sample_mae, 2)
+    }
+  ];
+  if (b && b.accuracy !== null) {
+    const edge = (b.accuracy - b.home_baseline_accuracy) * 100;
+    tiles.push({
+      k: "Backtest accuracy",
+      v: pct(b.accuracy),
+      u: "vs " + pct(b.home_baseline_accuracy) + " picking home",
+      n: (edge >= 0 ? "+" : "") + edge.toFixed(1) + " pts over baseline, " + b.n_evaluated + " games"
+    });
+  } else {
+    tiles.push({ k: "Backtest", v: "–", u: "not included", n: "re-run export without --no-backtest" });
+  }
+  $("tiles").innerHTML = tiles.map(t =>
+    '<div class="tile"><div class="eyebrow">' + esc(t.k) + '</div>' +
+    '<div class="v num">' + esc(t.v) + '</div>' +
+    '<div class="u">' + esc(t.u) + '</div>' +
+    '<div class="n num">' + esc(t.n) + '</div></div>'
+  ).join("");
+}
+
+/* ---------- matchup predictor ---------- */
+function fillTeamSelects() {
+  const teams = current.teams.map(t => t.team).slice().sort();
+  for (const id of ["home", "away"]) {
+    const sel = $(id);
+    const prev = sel.value;
+    sel.innerHTML = "";
+    teams.forEach(t => sel.appendChild(option(t, t)));
+    if (teams.includes(prev)) sel.value = prev;
+  }
+  if ($("home").value === $("away").value && teams.length > 1) {
+    $("away").value = teams[teams.length - 1];
+  }
+  const f = $("f-team");
+  const prevF = f.value;
+  f.innerHTML = "";
+  f.appendChild(option("", "All teams"));
+  teams.forEach(t => f.appendChild(option(t, t)));
+  if (prevF) f.value = prevF;
+}
+
+function predict() {
+  const home = $("home").value, away = $("away").value;
+  const neutral = $("neutral").checked;
+  const byTeam = new Map(current.teams.map(t => [t.team, t]));
+  const h = byTeam.get(home), a = byTeam.get(away);
+  if (!h || !a) return;
+
+  const hfa = neutral ? 0 : current.meta.hfa;
+  const margin = h.rating - a.rating + hfa;
+  const prob = 1 / (1 + Math.exp(-current.meta.logistic_scale * margin));
+  const favourite = margin >= 0 ? home : away;
+  const edge = Math.abs(margin);
+  const favProb = margin >= 0 ? prob : 1 - prob;
+  const units = current.margin_units;
+
+  let line;
+  if (home === away) {
+    line = '<div class="big">Pick two different teams.</div>';
+  } else {
+    line =
+      '<div><div class="eyebrow">Predicted margin</div>' +
+      '<div class="big num">' + esc(favourite) + " by " + edge.toFixed(2) + "</div>" +
+      '<div class="u subtle">' + esc(units) + (neutral ? ", no home-field term" : ", " + esc(home) + " at home") + "</div></div>" +
+      '<div><div class="eyebrow">' + esc(favourite) + " win probability</div>" +
+      '<div class="big num">' + (favProb * 100).toFixed(0) + "%</div>" +
+      '<div class="probbar"><i style="width:' + (favProb * 100).toFixed(1) + '%"></i></div></div>' +
+      '<div><div class="eyebrow">Ratings</div><div class="num" style="margin-top:6px">' +
+      esc(home) + " " + fmt(h.rating) + " · " + esc(away) + " " + fmt(a.rating) +
+      (neutral ? "" : " · HFA " + fmt(hfa)) + "</div></div>";
+  }
+  $("verdict").innerHTML = line;
+}
+
+["home", "away", "neutral"].forEach(id => $(id).addEventListener("change", predict));
+$("swap").addEventListener("click", () => {
+  const h = $("home").value;
+  $("home").value = $("away").value;
+  $("away").value = h;
+  predict();
+});
+
+/* ---------- diverging bar chart ---------- */
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / pow;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10;
+  return step * pow;
+}
+
+function drawChart() {
+  const teams = current.teams;
+  const svg = $("chart");
+  if (!teams.length) { svg.innerHTML = ""; return; }
+
+  const css = getComputedStyle(document.documentElement);
+  const colPos = css.getPropertyValue("--pos").trim();
+  const colNeg = css.getPropertyValue("--neg").trim();
+  const colRule = css.getPropertyValue("--rule").trim();
+  const colAxis = css.getPropertyValue("--axis").trim();
+  const colInk = css.getPropertyValue("--ink").trim();
+  const colMuted = css.getPropertyValue("--ink-muted").trim();
+
+  const rowH = 17, barH = 11, gutter = 44, padR = 46, padTop = 22, padBot = 8;
+  const width = 760;
+  const plotL = gutter, plotR = width - padR;
+  const mid = (plotL + plotR) / 2;
+  const half = (plotR - plotL) / 2;
+  const height = padTop + teams.length * rowH + padBot;
+  const domain = niceMax(Math.max(...teams.map(t => Math.abs(t.rating))) * 1.02);
+  const x = v => mid + (v / domain) * half;
+
+  const parts = [];
+  // Gridlines and ticks, recessive.
+  const ticks = [-domain, -domain / 2, 0, domain / 2, domain];
+  ticks.forEach(t => {
+    const px = x(t);
+    const isZero = Math.abs(t) < 1e-9;
+    parts.push('<line x1="' + px.toFixed(1) + '" y1="' + padTop + '" x2="' + px.toFixed(1) +
+      '" y2="' + (height - padBot) + '" stroke="' + (isZero ? colAxis : colRule) +
+      '" stroke-width="1" fill="none"></line>');
+    parts.push('<text x="' + px.toFixed(1) + '" y="' + (padTop - 8) + '" fill="' + colMuted +
+      '" font-size="10" text-anchor="middle" font-family="inherit" style="font-variant-numeric:tabular-nums">' +
+      (t > 0 ? "+" : "") + (Number.isInteger(t) ? t : t.toFixed(1)) + "</text>");
+  });
+
+  // One bar per team, 4px rounded end away from the baseline, square at zero.
+  teams.forEach((t, i) => {
+    const y = padTop + i * rowH + (rowH - barH) / 2;
+    const pos = t.rating >= 0;
+    const col = pos ? colPos : colNeg;
+    const end = x(t.rating);
+    const w = Math.max(Math.abs(end - mid), 1.5);
+    const r = Math.min(4, w);
+    const left = pos ? mid : mid - w;
+    // Rounded corners only on the outer end.
+    const d = pos
+      ? "M" + left + "," + y + "h" + (w - r) + "a" + r + "," + r + " 0 0 1 " + r + "," + r +
+        "v" + (barH - 2 * r) + "a" + r + "," + r + " 0 0 1 " + (-r) + "," + r + "h" + (-(w - r)) + "z"
+      : "M" + (left + w) + "," + y + "h" + (-(w - r)) + "a" + r + "," + r + " 0 0 0 " + (-r) + "," + r +
+        "v" + (barH - 2 * r) + "a" + r + "," + r + " 0 0 0 " + r + "," + r + "h" + (w - r) + "z";
+    parts.push('<path class="bar" d="' + d + '" fill="' + col + '" data-i="' + i + '"></path>');
+    // Team code in the left gutter.
+    parts.push('<text x="' + (gutter - 8) + '" y="' + (y + barH - 1.5) + '" fill="' + colInk +
+      '" font-size="11" text-anchor="end" font-family="inherit">' + esc(t.team) + "</text>");
+    // Selective direct labels: the three best and three worst only; the rest
+    // are in the table and on hover.
+    if (i < 3 || i >= teams.length - 3) {
+      const lx = pos ? end + 5 : end - 5;
+      parts.push('<text x="' + lx.toFixed(1) + '" y="' + (y + barH - 1.5) + '" fill="' + colMuted +
+        '" font-size="10" text-anchor="' + (pos ? "start" : "end") +
+        '" font-family="inherit" style="font-variant-numeric:tabular-nums">' + fmt(t.rating) + "</text>");
+    }
+  });
+
+  svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+  svg.innerHTML = parts.join("");
+
+  // Hover layer.
+  const tip = $("tip");
+  svg.querySelectorAll(".bar").forEach(bar => {
+    bar.addEventListener("mouseenter", ev => {
+      const t = teams[+ev.target.dataset.i];
+      tip.innerHTML = "<strong>" + esc(t.team) + "</strong> · rank " + t.rank + "<br>" +
+        "rating " + fmt(t.rating) + " " + esc(current.margin_units) + "<br>" +
+        recordText(t) + " · " + t.games_played + " games";
+      tip.classList.add("on");
+    });
+    bar.addEventListener("mousemove", ev => {
+      const box = tip.parentElement.getBoundingClientRect();
+      let left = ev.clientX - box.left + 12;
+      const top = ev.clientY - box.top + 12;
+      if (left + tip.offsetWidth > box.width - 4) left = box.width - tip.offsetWidth - 4;
+      tip.style.left = Math.max(4, left) + "px";
+      tip.style.top = top + "px";
+    });
+    bar.addEventListener("mouseleave", () => tip.classList.remove("on"));
+  });
+}
+
+function recordText(t) {
+  if (current.league === "nhl") {
+    return t.wins + "-" + t.losses + "-" + t.ot_losses + " (" + t.standings_points + " pts)";
+  }
+  return t.wins + "-" + t.losses + (t.ties ? "-" + t.ties : "");
+}
+
+/* ---------- ratings table ---------- */
+let sortKey = "rank", sortDir = 1;
+
+function ratingColumns() {
+  const nhl = current.league === "nhl";
+  const cols = [
+    { k: "rank", t: "#", num: true },
+    { k: "team", t: "Team", left: true },
+    { k: "rating", t: "Rating", num: true, signed: true, places: 3 },
+    { k: "games_played", t: "GP", num: true },
+    { k: "wins", t: "W", num: true },
+    { k: "losses", t: "L", num: true }
+  ];
+  if (nhl) {
+    cols.push({ k: "ot_losses", t: "OTL", num: true });
+    cols.push({ k: "standings_points", t: "Pts", num: true });
+    cols.push({ k: "scored", t: "GF", num: true });
+    cols.push({ k: "allowed", t: "GA", num: true });
+  } else {
+    cols.push({ k: "ties", t: "T", num: true });
+    cols.push({ k: "scored", t: "PF", num: true });
+    cols.push({ k: "allowed", t: "PA", num: true });
+  }
+  return cols;
+}
+
+function renderRatings() {
+  const cols = ratingColumns();
+  const head = $("ratings").tHead;
+  head.innerHTML = "<tr>" + cols.map(c =>
+    '<th class="sortable' + (c.left ? " l" : "") + '" data-k="' + c.k + '"' +
+    (sortKey === c.k ? ' aria-sort="' + (sortDir === 1 ? "ascending" : "descending") + '"' : "") +
+    ">" + esc(c.t) + (sortKey === c.k ? ' <span class="arr">' + (sortDir === 1 ? "▲" : "▼") + "</span>" : "") +
+    "</th>").join("") + "</tr>";
+
+  head.querySelectorAll("th").forEach(th => th.addEventListener("click", () => {
+    const k = th.dataset.k;
+    if (sortKey === k) sortDir = -sortDir;
+    else { sortKey = k; sortDir = (k === "rank" || k === "team") ? 1 : -1; }
+    renderRatings();
+  }));
+
+  const rows = current.teams.slice().sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (typeof x === "string") return sortDir * x.localeCompare(y);
+    return sortDir * ((x ?? 0) - (y ?? 0));
+  });
+
+  $("ratings").tBodies[0].innerHTML = rows.map(t => "<tr>" + cols.map(c => {
+    const v = t[c.k];
+    if (c.k === "team") return '<td class="team l">' + esc(v) + "</td>";
+    if (c.signed) return '<td class="num ' + signClass(v) + '">' + fmt(v, c.places || 2) + "</td>";
+    return '<td class="num">' + (v === null || v === undefined ? "–" : esc(v)) + "</td>";
+  }).join("") + "</tr>").join("");
+}
+
+/* ---------- results browser ---------- */
+const MAX_ROWS = 300;
+
+function renderResults() {
+  const team = $("f-team").value;
+  const pick = $("f-pick").value;
+  const search = $("f-search").value.trim().toUpperCase();
+  const nfl = current.league === "nfl";
+
+  let games = current.games.slice().reverse();
+  if (team) games = games.filter(g => g.home === team || g.away === team);
+  if (search) games = games.filter(g => g.home.includes(search) || g.away.includes(search));
+  if (pick === "hit") games = games.filter(g => g.correct === true);
+  else if (pick === "miss") games = games.filter(g => g.correct === false);
+  else if (pick === "scored") games = games.filter(g => g.predicted_margin !== null);
+
+  const head = ["Date", nfl ? "Wk" : "", "Matchup", "Score", "Margin", "Predicted", "Win prob", "Pick"]
+    .filter(h => h !== "");
+  $("results").tHead.innerHTML = "<tr>" +
+    head.map((h, i) => '<th' + (i <= 2 ? ' class="l"' : "") + ">" + esc(h) + "</th>").join("") + "</tr>";
+
+  const shown = games.slice(0, MAX_ROWS);
+  const body = $("results").tBodies[0];
+
+  if (!shown.length) {
+    body.innerHTML = '<tr><td class="empty l" colspan="' + head.length + '">No games match these filters.</td></tr>';
+  } else {
+    body.innerHTML = shown.map(g => {
+      const at = g.neutral ? " vs " : " at ";
+      const matchup = esc(g.away) + at + esc(g.home) + (g.neutral ? ' <span class="pill">neutral</span>' : "");
+      const score = g.away_score === null ? "–" : g.away_score + "–" + g.home_score;
+      const outcome = g.outcome && g.outcome !== "REG" ? ' <span class="pill">' + esc(g.outcome) + "</span>" : "";
+      // Correct picks are marked by a glyph and a word in neutral ink; only a
+      // miss takes colour. Green/red would be the obvious choice and is
+      // exactly what a red-green colourblind reader cannot distinguish.
+      const verdict = g.correct === null || g.correct === undefined
+        ? '<span class="subtle">—</span>'
+        : g.correct
+          ? '<span class="hit">✓ hit</span>'
+          : '<span class="miss">✗ miss</span>';
+      return "<tr>" +
+        '<td class="l num">' + esc(g.date) + "</td>" +
+        (nfl ? '<td class="l num">' + (g.week ?? "–") + "</td>" : "") +
+        '<td class="l">' + matchup + "</td>" +
+        '<td class="num">' + score + outcome + "</td>" +
+        '<td class="num ' + signClass(g.margin) + '">' + fmt(g.margin, 0) + "</td>" +
+        '<td class="num">' + fmt(g.predicted_margin, 2) + "</td>" +
+        '<td class="num">' + (g.home_win_prob === null ? "–" : (g.home_win_prob * 100).toFixed(0) + "%") + "</td>" +
+        "<td>" + verdict + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  $("results-count").textContent = shown.length < games.length
+    ? "Showing the " + shown.length + " most recent of " + games.length + " matching games."
+    : games.length + (games.length === 1 ? " game" : " games") + ".";
+}
+
+["f-team", "f-pick"].forEach(id => $(id).addEventListener("change", renderResults));
+$("f-search").addEventListener("input", renderResults);
+
+/* ---------- season switching ---------- */
+function renderSeasonOptions() {
+  const sel = $("season");
+  sel.innerHTML = "";
+  [...SEASONS.keys()].sort().reverse().forEach(s => sel.appendChild(option(s, s)));
+  sel.value = current.season;
+}
+
+function renderAll() {
+  document.title = current.league_label + " Power Ratings";
+  $("pagetitle").textContent = current.league_label + " Power Ratings";
+  $("eyebrow").textContent = "Massey least-squares ratings · " + current.season + " season";
+  $("window").textContent = current.meta.games_fitted + " games fitted, " +
+    current.meta.first_date + " to " + current.meta.last_date +
+    " · ratings in " + current.margin_units + ", relative to an average team";
+  $("chart-note").textContent = "Diverging from zero. Ratings sum to zero, so the midpoint is an average team.";
+  $("predictor-note").textContent = "Rating difference plus the fitted home-field advantage.";
+  const b = current.backtest;
+  $("results-note").textContent = b
+    ? "Predictions are walk-forward: each game was predicted from games played before it. The first " +
+      (b.n_warmup_skipped || 0) + " were warm-up and not scored."
+    : "Exported without a backtest, so there are no predictions to compare.";
+  $("footer").textContent = "Generated " + current.meta.generated_at +
+    " by massey · ridge " + current.meta.ridge +
+    " · win probabilities use a logistic scale of " + current.meta.logistic_scale.toFixed(3) +
+    (b ? " fitted during the backtest" : " (league default, no backtest run)");
+
+  renderSeasonOptions();
+  renderTiles();
+  fillTeamSelects();
+  predict();
+  drawChart();
+  renderRatings();
+  renderResults();
+}
+
+$("season").addEventListener("change", ev => {
+  const next = SEASONS.get(ev.target.value);
+  if (next) { current = next; renderAll(); }
+});
+
+/* ---------- load a season from disk ---------- */
+$("loadbtn").addEventListener("click", () => $("fileinput").click());
+$("fileinput").addEventListener("change", ev => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let payload;
+    try {
+      payload = JSON.parse(reader.result);
+    } catch (e) {
+      alertInline("That file is not valid JSON.");
+      return;
+    }
+    const season = payload && payload.seasons ? payload.seasons[0] : payload;
+    if (!season || !season.teams || !season.season) {
+      alertInline("That file does not look like a season export.");
+      return;
+    }
+    if (season.league !== current.league) {
+      alertInline("That file is " + String(season.league).toUpperCase() +
+        " data; this page shows " + current.league_label + ".");
+      return;
+    }
+    SEASONS.set(season.season, season);
+    current = season;
+    renderAll();
+    $("window").textContent += " · loaded from " + file.name;
+  };
+  reader.onerror = () => alertInline("Could not read that file.");
+  reader.readAsText(file);
+  ev.target.value = "";
+});
+
+function alertInline(message) {
+  // The page has no dialogs; say it in place instead.
+  $("window").textContent = message;
+}
+
+renderAll();
+</script>
+</body>
+</html>

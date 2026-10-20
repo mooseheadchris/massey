@@ -146,6 +146,44 @@ def test_games_feed_the_solver(nfl_cache: Path):
     assert max(result.ratings, key=lambda team: result.ratings[team]) == "BBB"
 
 
+def test_season_reaches_nflreadpy_as_an_integer(tmp_path: Path, monkeypatch):
+    # The command line hands the season over as a string. nflreadpy filters an
+    # integer season column, so a string year reaches polars as a type
+    # mismatch ("'is_in' cannot check for Int32 values in List(String) data")
+    # rather than as a lookup that returns nothing.
+    import sys
+    import types
+
+    captured = {}
+
+    fake = types.ModuleType("nflreadpy")
+
+    def load_schedules(seasons):
+        captured["seasons"] = seasons
+        raise RuntimeError("stop before the download")
+
+    fake.load_schedules = load_schedules
+    monkeypatch.setitem(sys.modules, "nflreadpy", fake)
+    monkeypatch.setattr("massey.data.cache.time.sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError):
+        nfl.load_schedule_frame("2025", cache_dir=tmp_path)
+
+    assert captured["seasons"] == [2025]
+    assert isinstance(captured["seasons"][0], int)
+
+
+def test_a_season_that_is_not_a_year_is_rejected(tmp_path: Path):
+    with pytest.raises(ValueError, match="NFL season year"):
+        nfl.load_schedule_frame("not-a-year", cache_dir=tmp_path)
+
+
+def test_string_and_int_seasons_share_one_cache_entry(nfl_cache: Path):
+    by_string = nfl.load_games("2025", cache_dir=nfl_cache)
+    by_int = nfl.load_games(2025, cache_dir=nfl_cache)
+    assert [game.game_id for game in by_string] == [game.game_id for game in by_int]
+
+
 def test_loader_does_not_touch_the_network_when_cached(nfl_cache: Path, monkeypatch):
     # Guards the cache contract: a cached season must not import or call
     # nflreadpy at all.

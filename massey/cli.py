@@ -35,6 +35,7 @@ from massey.backtest import (
 from massey.leagues import LEAGUES, get_league
 from massey.leagues.base import GameRecord
 from massey.models import DEFAULT_RIDGE, MasseyResult, solve_massey
+from massey.web import build_season_payload, render_page
 
 #: Where CSV and JSON outputs are written.
 DEFAULT_OUTPUT_DIR = Path("output")
@@ -111,6 +112,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-save", action="store_true", help="print only, do not write to output/"
     )
 
+    export = subparsers.add_parser(
+        "export", help="write a self-contained HTML page for viewing in a browser"
+    )
+    _add_common_arguments(export, cutoffs=False, multi_season=True)
+    export.add_argument(
+        "--ridge",
+        type=float,
+        default=DEFAULT_RIDGE,
+        help=f"ridge penalty on team ratings (default: {DEFAULT_RIDGE})",
+    )
+    export.add_argument(
+        "--max-margin",
+        type=float,
+        default=None,
+        help="cap the absolute margin at this value (NFL only; default: no cap)",
+    )
+    export.add_argument(
+        "--no-backtest",
+        action="store_true",
+        help="skip the walk-forward backtest, leaving the page without predictions",
+    )
+    export.add_argument(
+        "--refit",
+        choices=REFIT_CADENCES,
+        default="per-day",
+        help="how often the backtest refits ratings (default: per-day)",
+    )
+
     inspect = subparsers.add_parser(
         "inspect", help="dump the raw field names the league's data source returned"
     )
@@ -119,23 +148,41 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_common_arguments(parser: argparse.ArgumentParser, *, cutoffs: bool = True) -> None:
-    """Add the arguments every command shares."""
+def _add_common_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    cutoffs: bool = True,
+    multi_season: bool = False,
+) -> None:
+    """Add the arguments every command shares.
+
+    Args:
+        parser: The subcommand parser to add to.
+        cutoffs: Whether to offer ``--as-of`` and ``--week``.
+        multi_season: Whether ``--season`` accepts several values, as ``export``
+            does so one page can hold a season dropdown.
+    """
     parser.add_argument(
         "--league",
         required=True,
         choices=sorted(LEAGUES),
         help="which league to rate",
     )
-    parser.add_argument(
-        "--season",
-        default=None,
-        help=(
-            "season, named for the year it starts in (e.g. 2026 means the NFL "
-            "2026 season or the NHL 2026-27 season; an NHL id like 20262027 "
-            "also works). Defaults to the current season."
-        ),
+    season_help = (
+        "season, named for the year it starts in (e.g. 2026 means the NFL "
+        "2026 season or the NHL 2026-27 season; an NHL id like 20262027 "
+        "also works). Defaults to the current season."
     )
+    if multi_season:
+        parser.add_argument(
+            "--season",
+            nargs="+",
+            default=None,
+            metavar="SEASON",
+            help=season_help + " Several may be given; the page gets a dropdown.",
+        )
+    else:
+        parser.add_argument("--season", default=None, help=season_help)
     parser.add_argument(
         "--include-playoffs",
         action="store_true",
@@ -205,6 +252,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _command_rate(args, league, season)
         if args.command == "backtest":
             return _command_backtest(args, league, season)
+        if args.command == "export":
+            return _command_export(args, league, season)
         if args.command == "inspect":
             return _command_inspect(args, league, season)
     except Exception as error:  # noqa: BLE001 - a CLI should not show a traceback
@@ -261,6 +310,60 @@ def _command_backtest(args: argparse.Namespace, league: Any, season: Any) -> int
         print()
         for path in paths:
             print(f"wrote {path}")
+    return 0
+
+
+def _command_export(args: argparse.Namespace, league: Any, seasons: Any) -> int:
+    """Write a self-contained HTML page, plus one JSON file per season."""
+    wanted = seasons if isinstance(seasons, list) else [seasons]
+    output_dir = Path(args.output_dir)
+
+    config = None
+    if not args.no_backtest:
+        config = BacktestConfig(
+            ridge=args.ridge,
+            skip_weeks=league.default_skip_weeks,
+            skip_games=league.default_skip_games,
+            refit=args.refit,
+            logistic_scale=league.default_logistic_scale,
+        )
+
+    payloads: list[dict[str, Any]] = []
+    written: list[Path] = []
+    for season in wanted:
+        games = _load_games(args, league, season, as_of=None, week=None)
+        if not games:
+            print(
+                f"no completed {league.name.upper()} games found for {season}, skipping",
+                file=sys.stderr,
+            )
+            continue
+
+        payload = build_season_payload(
+            league, season, games, ridge=args.ridge, backtest_config=config
+        )
+        payloads.append(payload)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        season_path = output_dir / f"{league.name}_{season}_page.json"
+        season_path.write_text(json.dumps(payload, indent=1))
+        written.append(season_path)
+        print(f"  {league.name.upper()} {season}: {payload['meta']['games_fitted']} games")
+
+    if not payloads:
+        print(f"nothing to export for {league.name.upper()}")
+        return 1
+
+    # Newest season first, so the page opens on the most recent one.
+    payloads.sort(key=lambda item: item["season"], reverse=True)
+    page = render_page(payloads, output_dir / f"{league.name}.html")
+
+    print()
+    print(f"wrote {page}")
+    for path in written:
+        print(f"wrote {path}")
+    print()
+    print(f"Open it by double-clicking {page.name}, or:  open {page}")
     return 0
 
 

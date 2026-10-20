@@ -38,6 +38,10 @@ python -m massey.cli rate --league nhl --season 2025 --as-of 2026-01-15
 python -m massey.cli backtest --league nfl --season 2025
 python -m massey.cli backtest --league nhl --season 2025
 
+# Build a browser page (see "Viewing in a browser")
+python -m massey.cli export --league nfl --season 2026 2025 2024
+python -m massey.cli export --league nhl --season 2025
+
 # Dump the raw field names the NHL API returned (see "NHL payload shape")
 python -m massey.cli inspect --league nhl --season 2025
 ```
@@ -142,6 +146,11 @@ loader and the solver pick the change up with no other edits.
   predicted and actual margin, the win probability, and the training-set size
 - `{league}_{season}_backtest_summary.json` — the metrics below
 
+`export` writes:
+
+- `{league}.html` — the self-contained browser page
+- `{league}_{season}_page.json` — one per season, for the page's file picker
+
 `--no-save` prints without writing. Raw data pulls are cached under `data/raw/`;
 both directories are gitignored.
 
@@ -201,6 +210,48 @@ points-differential model gets; closing that gap is what an efficiency model
 No NHL figures are listed here yet: the field names are confirmed against a
 live payload, but no full season has been pulled and backtested.
 
+## Viewing in a browser
+
+```bash
+python -m massey.cli export --league nfl --season 2026 2025 2024
+```
+
+Writes `output/nfl.html` (and `output/nhl.html` for the NHL), a single
+self-contained file. Double-click it — there is no server to run and nothing is
+fetched when it opens. The page has:
+
+- the fitted HFA, ridge, game count and backtest accuracy as tiles
+- a **matchup predictor**: pick two teams, tick neutral site, get the predicted
+  margin and win probability
+- a diverging bar chart of the ratings, with hover detail
+- a sortable table using each league's own columns — W-L-T and points for and
+  against for the NFL; W-L-OTL, standings points and goals for the NHL
+- a filterable list of every game with the actual result beside the
+  walk-forward prediction, marked hit or miss
+
+Pass several seasons and the page gets a dropdown to switch between them
+instantly. Each season is also written as `output/<league>_<season>_page.json`,
+and the page's **Load season file…** button reads one of those from disk, so a
+season generated later can be viewed without rebuilding the page.
+
+Two deliberate constraints are worth knowing, because they explain why the page
+works the way it does. A page opened by double-clicking has a `null` origin, so
+any request it made to the NHL API or to GitHub would be refused by CORS — and
+the rating model is Python, which a browser cannot run. So the page never
+fetches anything: every number in it is computed by `export` and baked in. The
+file-picker button sidesteps this because `FileReader` reads local files
+without a network request of any kind.
+
+Size: a season is roughly 40KB of JSON for the NFL and 400KB for the NHL, so
+embedding many NHL seasons in one page adds up.
+
+A note on the colours, since they were chosen rather than picked: ratings use a
+blue-to-red diverging scale around zero, which is the right encoding for a
+value whose sign is the point. Hits and misses in the results list are marked
+by a glyph and a word, with red used only for a miss — the obvious green/red
+pairing measures a colour-difference of 2.5 under deuteranopia, meaning
+red-green colourblind readers could not tell the two apart.
+
 ## NHL payload shape
 
 `api-web.nhle.com` is free but undocumented. The field names below have been
@@ -259,7 +310,9 @@ massey/
   leagues/nhl.py       api-web loading, outcome-points margins, defensive reads
   backtest.py          walk-forward evaluation and metrics
   cli.py               argument parsing, console tables, CSV/JSON output
-tests/                 154 tests; see below
+  web.py               builds the page payload and renders the HTML
+  templates/           the page itself: one file, no external dependencies
+tests/                 182 tests; see below
 data/raw/              cached raw pulls (gitignored)
 output/                generated CSV and JSON (gitignored)
 ```
@@ -270,7 +323,7 @@ output/                generated CSV and JSON (gitignored)
 pytest -q
 ```
 
-154 tests, no network access required — the league tests seed the cache and run
+182 tests, no network access required — the league tests seed the cache and run
 the real loaders against it.
 
 - `test_massey.py` — the solver against a synthetic four-team league with known
@@ -286,7 +339,9 @@ the real loaders against it.
   include the game being predicted), warm-up accounting, tie handling,
   calibration
 - `test_cache.py` — fetch-once caching, `--refresh`, exponential backoff
-- `test_cli.py` — both commands end to end, output files, error paths
+- `test_cli.py` — every command end to end, output files, error paths
+- `test_web.py` — the page payload, each league's own record columns, and
+  that the embedded JSON cannot break out of its script tag
 
 ## Known limitations
 
@@ -297,8 +352,6 @@ the real loaders against it.
   LV, SD to LAC) mean a team can appear under two codes in different seasons.
   Only one season is rated at a time, so this does not affect results, but do
   not join two seasons' CSVs on `team` without mapping first.
-- **`nflreadpy` has been seen to fail once and then succeed unchanged** on the
-  next identical call. The fetch is wrapped in retry/backoff for that reason.
 - **Ratings are a single-season fit** with no carry-over prior from last
   season, so week-1 ratings are genuinely uninformative rather than
   slightly-informative.

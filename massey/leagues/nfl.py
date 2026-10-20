@@ -77,7 +77,7 @@ def current_season() -> int:
 
 
 def load_schedule_frame(
-    season: int,
+    season: int | str,
     *,
     cache_dir: Path | str | None = None,
     refresh: bool = False,
@@ -85,28 +85,38 @@ def load_schedule_frame(
     """Load one season's raw schedule as a pandas DataFrame, via the cache.
 
     Args:
-        season: Season year, e.g. ``2026``.
+        season: Season year, e.g. ``2026``. A string is accepted, since that is
+            what the command line supplies.
         cache_dir: Root of the raw-data cache. Defaults to ``data/raw``.
         refresh: Re-fetch even if a cached copy exists.
 
     Returns:
         The season's schedule, one row per scheduled game, including games that
         have not been played yet.
+
+    Raises:
+        ValueError: If ``season`` is not a year.
     """
+    # nflreadpy filters its season column, which is an integer, so a string
+    # year reaches polars as a type mismatch rather than a lookup. Coerce here
+    # so every caller -- the CLI included -- can pass either.
+    try:
+        year = int(season)
+    except (TypeError, ValueError):
+        raise ValueError(f"cannot read {season!r} as an NFL season year") from None
+
     cache = Cache(cache_dir or DEFAULT_CACHE_DIR, refresh=refresh)
 
     def fetch() -> pd.DataFrame:
         import nflreadpy
 
-        logger.info("fetching NFL schedules for %s", season)
-        # Retried because nflreadpy's own download-and-filter step has been
-        # seen to fail once and then succeed unchanged on the next call.
+        logger.info("fetching NFL schedules for %s", year)
         return with_retry(
-            lambda: nflreadpy.load_schedules(seasons=[season]).to_pandas(),
-            description=f"nflreadpy.load_schedules({season})",
+            lambda: nflreadpy.load_schedules(seasons=[year]).to_pandas(),
+            description=f"nflreadpy.load_schedules({year})",
         )
 
-    return cache.parquet(("nfl", f"schedules_{season}.parquet"), fetch)
+    return cache.parquet(("nfl", f"schedules_{year}.parquet"), fetch)
 
 
 def apply_margin_cap(margin: float, max_margin: float | None) -> float:
@@ -127,7 +137,7 @@ def apply_margin_cap(margin: float, max_margin: float | None) -> float:
 
 
 def load_games(
-    season: int,
+    season: int | str,
     *,
     as_of: date | None = None,
     week: int | None = None,
@@ -139,7 +149,7 @@ def load_games(
     """Load completed NFL games for a season as rating inputs.
 
     Args:
-        season: Season year, e.g. ``2026``.
+        season: Season year, e.g. ``2026``. Accepts a string year too.
         as_of: Keep only games played strictly before this date.
         week: Keep only games from weeks strictly before this one, i.e. the
             ratings a forecaster would carry *into* that week.

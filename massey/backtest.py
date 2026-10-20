@@ -132,6 +132,9 @@ class BacktestSummary:
         brier: Brier score of the calibrated win probabilities.
         mean_hfa: Mean fitted home-field advantage across refits.
         final_hfa: Home-field advantage from the last refit.
+        final_logistic_scale: The margin-to-probability scale in force at the
+            end of the run, for turning a predicted margin into a win
+            probability outside the backtest.
     """
 
     league: str
@@ -152,6 +155,7 @@ class BacktestSummary:
     brier: float | None
     mean_hfa: float | None
     final_hfa: float | None
+    final_logistic_scale: float
 
 
 def run_backtest(
@@ -181,6 +185,7 @@ def run_backtest(
     predictions: list[GamePrediction] = []
     calibration: list[tuple[float, bool]] = []
     fitted_hfas: list[float] = []
+    final_scale = config.logistic_scale
 
     warmup_skipped = 0
     unrated_skipped = 0
@@ -191,6 +196,7 @@ def run_backtest(
         if result is not None:
             fitted_hfas.append(result.hfa)
         scale = _logistic_scale(calibration, config)
+        final_scale = scale
 
         for record in batch:
             index = position
@@ -250,6 +256,7 @@ def run_backtest(
         n_warmup_skipped=warmup_skipped,
         n_unrated_skipped=unrated_skipped,
         fitted_hfas=fitted_hfas,
+        logistic_scale=final_scale,
     )
     return summary, predictions
 
@@ -264,6 +271,7 @@ def summarise(
     n_warmup_skipped: int,
     n_unrated_skipped: int,
     fitted_hfas: Sequence[float],
+    logistic_scale: float,
 ) -> BacktestSummary:
     """Aggregate per-game predictions into a :class:`BacktestSummary`.
 
@@ -276,6 +284,7 @@ def summarise(
         n_warmup_skipped: Games held back as warm-up.
         n_unrated_skipped: Games skipped for want of a rating.
         fitted_hfas: Home-field advantage from each refit.
+        logistic_scale: The margin-to-probability scale after the final refit.
 
     Returns:
         The summary.
@@ -324,6 +333,7 @@ def summarise(
         brier=brier,
         mean_hfa=_mean(list(fitted_hfas)),
         final_hfa=float(fitted_hfas[-1]) if fitted_hfas else None,
+        final_logistic_scale=float(logistic_scale),
     )
 
 
