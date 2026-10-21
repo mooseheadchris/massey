@@ -22,7 +22,7 @@ new margin definition) only needs a converter.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -67,6 +67,8 @@ class MasseyResult:
         residual_mae: In-sample mean absolute error of the fitted margins. A
             sanity check on the fit, not an out-of-sample metric -- use
             :mod:`massey.backtest` for that.
+        prior_teams: How many teams the ridge was pulled toward a prior rating
+            for, rather than toward zero. ``0`` for an ordinary fit.
     """
 
     ratings: dict[str, float]
@@ -75,6 +77,7 @@ class MasseyResult:
     ridge: float
     n_games: int
     residual_mae: float
+    prior_teams: int = 0
 
     @property
     def teams(self) -> list[str]:
@@ -87,6 +90,7 @@ def solve_massey(
     *,
     ridge: float = DEFAULT_RIDGE,
     estimate_hfa: bool = True,
+    prior: Mapping[str, float] | None = None,
 ) -> MasseyResult:
     """Fit Massey ratings to a collection of games.
 
@@ -97,13 +101,20 @@ def solve_massey(
             well-connected schedule but can be ill-posed on a sparse one.
         estimate_hfa: When ``False``, no home-field term is fitted and
             ``hfa`` is reported as ``0.0``.
+        prior: Ratings to shrink toward instead of zero, usually last season's
+            regressed toward the mean -- see :func:`carry_over_prior`. A team
+            missing from the prior is shrunk toward zero, which for an
+            expansion team is exactly right. A team in the prior that played no
+            games is ignored. Has no effect when ``ridge`` is ``0``, since the
+            penalty it rides on is then switched off.
 
     Returns:
         The fitted :class:`MasseyResult`.
 
     Raises:
-        ValueError: If ``games`` is empty, ``ridge`` is negative, or a game
-            lists the same team as both home and away.
+        ValueError: If ``games`` is empty, ``ridge`` is negative, a game lists
+            the same team as both home and away, or the prior holds a value
+            that is not finite.
     """
     if ridge < 0:
         raise ValueError(f"ridge must be non-negative, got {ridge}")
@@ -135,7 +146,10 @@ def solve_massey(
             design[i, hfa_col] = 1.0
         margins[i] = game.margin
 
-    params = _solve_constrained_ridge(design, margins, n_teams=n_teams, ridge=ridge)
+    prior_vector, prior_teams = _prior_vector(prior, index, n_params)
+    params = _solve_constrained_ridge(
+        design, margins, n_teams=n_teams, ridge=ridge, prior=prior_vector
+    )
 
     fitted = design @ params
     residual_mae = float(np.mean(np.abs(margins - fitted)))
@@ -152,7 +166,84 @@ def solve_massey(
         ridge=float(ridge),
         n_games=len(rows),
         residual_mae=residual_mae,
+        prior_teams=prior_teams,
     )
+
+
+def _prior_vector(
+    prior: Mapping[str, float] | None,
+    index: Mapping[str, int],
+    n_params: int,
+) -> tuple[np.ndarray | None, int]:
+    """Lay a team-keyed prior out in parameter order.
+
+    The caller supplies a mapping because it cannot know the solver's column
+    order, which comes from sorting the teams found in the games.
+
+    Args:
+        prior: Team -> prior rating, or ``None``.
+        index: Team -> column, from the fit being set up.
+        n_params: Width of the parameter vector, including any HFA column.
+
+    Returns:
+        ``(vector, teams_matched)``. The vector is ``None`` when there is no
+        prior to apply. The home-field column is left at zero, which is what
+        keeps HFA freely estimated: its ridge penalty is zero, so whatever sits
+        in that slot is multiplied away.
+
+    Raises:
+        ValueError: If a prior rating is not finite. A NaN would survive the
+            multiply by a zero penalty and spread through the whole solve.
+    """
+    if not prior:
+        return None, 0
+
+    vector = np.zeros(n_params)
+    matched = 0
+    for team, rating in prior.items():
+        column = index.get(team)
+        if column is None:
+            continue  # in the prior but played no games: a folded or moved club
+        value = float(rating)
+        if not np.isfinite(value):
+            raise ValueError(f"prior rating for {team!r} is not finite: {rating!r}")
+        vector[column] = value
+        matched += 1
+
+    return (vector, matched) if matched else (None, 0)
+
+
+def carry_over_prior(
+    previous: MasseyResult,
+    retention: float,
+) -> dict[str, float]:
+    """Regress a finished season's ratings toward the mean for use as a prior.
+
+    Teams change over an offseason, so last season's ratings are evidence about
+    this one rather than a starting point to be taken at face value.
+    ``retention`` says how much of the gap from average survives: ``0.0``
+    discards last season entirely (identical to no prior at all), ``1.0``
+    assumes nothing changed. Somewhere around a third is the usual
+    neighbourhood for the NFL; tune it against the backtest rather than taking
+    that on faith.
+
+    Because the ratings sum to zero, scaling them keeps that true, so the prior
+    never fights the solver's sum-to-zero constraint.
+
+    Args:
+        previous: A fit of the preceding season.
+        retention: Fraction of each rating to keep, from 0 to 1.
+
+    Returns:
+        Team -> prior rating, ready to pass to :func:`solve_massey`.
+
+    Raises:
+        ValueError: If ``retention`` is outside ``[0, 1]``.
+    """
+    if not 0.0 <= retention <= 1.0:
+        raise ValueError(f"retention must be between 0 and 1, got {retention}")
+
+    return {team: retention * rating for team, rating in previous.ratings.items()}
 
 
 def _solve_constrained_ridge(
@@ -161,8 +252,9 @@ def _solve_constrained_ridge(
     *,
     n_teams: int,
     ridge: float,
+    prior: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Minimise ``||Xb - y||^2 + ridge * ||b_teams||^2`` with the team block
+    """Minimise ``||Xb - y||^2 + ridge * ||b_teams - p||^2`` with the team block
     constrained to sum to zero.
 
     The sum-to-zero constraint is enforced exactly with a Lagrange multiplier
@@ -180,6 +272,11 @@ def _solve_constrained_ridge(
         n_teams: Number of leading columns that are team ratings. Any further
             column (the HFA term) is left unpenalised and unconstrained.
         ridge: Ridge penalty for the team block.
+        prior: Values to shrink toward instead of zero, in parameter order.
+            Shrinking toward ``p`` rather than ``0`` leaves the left-hand side
+            untouched and only adds ``ridge * p`` to the target, since
+            minimising ``||Xb - y||^2 + L||b - p||^2`` gives
+            ``(X'X + L)b = X'y + Lp``.
 
     Returns:
         The ``(n_params,)`` parameter vector.
@@ -191,6 +288,10 @@ def _solve_constrained_ridge(
 
     normal = design.T @ design + np.diag(penalty)
     target = design.T @ margins
+    if prior is not None:
+        # Elementwise, so the HFA column contributes nothing: its penalty is
+        # zero, which multiplies away whatever the prior holds there.
+        target = target + penalty * prior
 
     constraint = np.zeros(n_params)
     constraint[:n_teams] = 1.0

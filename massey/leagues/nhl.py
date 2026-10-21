@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from massey.data.cache import DEFAULT_CACHE_DIR, USER_AGENT, Cache, with_retry
+from massey.models import DEFAULT_RIDGE
 from massey.leagues.base import GameRecord, filter_by_cutoff
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,14 @@ name = "nhl"
 margin_units = "outcome points"
 default_skip_weeks: int | None = None
 default_skip_games: int | None = 100
+
+#: Untuned, unlike the NFL's. No season of real NHL results has been pulled
+#: through a backtest yet, so these stay at the neutral defaults rather than
+#: borrowing the NFL's measured values: ridge is scale-invariant here, but the
+#: NHL plays 82 games to the NFL's 17, which changes how much a given penalty
+#: shrinks. Sweep them once you have a season cached.
+default_ridge = DEFAULT_RIDGE
+default_prior_retention = 0.0
 
 #: Starting logistic scale for turning a predicted outcome-point margin into a
 #: home win probability, used only until the backtest has fitted its own.
@@ -133,6 +142,21 @@ def current_season() -> int:
     """
     today = date.today()
     return today.year if today.month >= 7 else today.year - 1
+
+
+def previous_season(season: int | str) -> int:
+    """Return the season before this one, for building a carry-over prior.
+
+    Args:
+        season: Season year (``2026``) or identifier (``"20262027"``).
+
+    Returns:
+        The preceding season's starting year, in the CLI's own form.
+
+    Raises:
+        ValueError: If ``season`` cannot be read as a season.
+    """
+    return int(season_id(season)[:4]) - 1
 
 
 def season_id(season: int | str) -> str:

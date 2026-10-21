@@ -18,7 +18,7 @@ import argparse
 import json
 import logging
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date
 from pathlib import Path
 from typing import Any, Sequence
@@ -34,7 +34,7 @@ from massey.backtest import (
 )
 from massey.leagues import LEAGUES, get_league
 from massey.leagues.base import GameRecord
-from massey.models import DEFAULT_RIDGE, MasseyResult, solve_massey
+from massey.models import MasseyResult, carry_over_prior, solve_massey
 from massey.web import build_season_payload, render_page
 
 #: Where CSV and JSON outputs are written.
@@ -58,18 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     rate = subparsers.add_parser("rate", help="fit and print ratings for a season")
     _add_common_arguments(rate)
-    rate.add_argument(
-        "--ridge",
-        type=float,
-        default=DEFAULT_RIDGE,
-        help=f"ridge penalty on team ratings (default: {DEFAULT_RIDGE})",
-    )
-    rate.add_argument(
-        "--max-margin",
-        type=float,
-        default=None,
-        help="cap the absolute margin at this value (NFL only; default: no cap)",
-    )
+    _add_model_arguments(rate)
     rate.add_argument(
         "--no-save", action="store_true", help="print only, do not write to output/"
     )
@@ -78,18 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
         "backtest", help="walk-forward evaluation against the home-team baseline"
     )
     _add_common_arguments(backtest)
-    backtest.add_argument(
-        "--ridge",
-        type=float,
-        default=DEFAULT_RIDGE,
-        help=f"ridge penalty on team ratings (default: {DEFAULT_RIDGE})",
-    )
-    backtest.add_argument(
-        "--max-margin",
-        type=float,
-        default=None,
-        help="cap the absolute margin at this value (NFL only; default: no cap)",
-    )
+    _add_model_arguments(backtest)
     backtest.add_argument(
         "--skip-weeks",
         type=int,
@@ -116,18 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
         "export", help="write a self-contained HTML page for viewing in a browser"
     )
     _add_common_arguments(export, cutoffs=False, multi_season=True)
-    export.add_argument(
-        "--ridge",
-        type=float,
-        default=DEFAULT_RIDGE,
-        help=f"ridge penalty on team ratings (default: {DEFAULT_RIDGE})",
-    )
-    export.add_argument(
-        "--max-margin",
-        type=float,
-        default=None,
-        help="cap the absolute margin at this value (NFL only; default: no cap)",
-    )
+    _add_model_arguments(export)
     export.add_argument(
         "--no-backtest",
         action="store_true",
@@ -146,6 +113,34 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_arguments(inspect, cutoffs=False)
 
     return parser
+
+
+def _add_model_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the model settings shared by rate, backtest and export."""
+    parser.add_argument(
+        "--ridge",
+        type=float,
+        default=None,
+        help="ridge penalty on team ratings (default: the league's own)",
+    )
+    parser.add_argument(
+        "--max-margin",
+        type=float,
+        default=None,
+        help="cap the absolute margin at this value (NFL only; default: no cap)",
+    )
+    parser.add_argument(
+        "--prior-retention",
+        type=float,
+        default=None,
+        metavar="FRACTION",
+        help=(
+            "shrink toward the previous season's ratings instead of toward "
+            "zero, keeping this fraction of them (0 switches it off; default: "
+            "the league's own). Steadies early-season ratings, and costs one "
+            "extra season of data to load."
+        ),
+    )
 
 
 def _add_common_arguments(
@@ -229,6 +224,24 @@ def _parse_date_argument(text: str) -> date:
 # Commands
 # --------------------------------------------------------------------------- #
 
+def _apply_league_defaults(args: argparse.Namespace, league: Any) -> None:
+    """Fill in model settings the command line left unset.
+
+    The right ridge depends on how many games a league plays, so it is the
+    league's call rather than one global constant.
+
+    Args:
+        args: Parsed arguments, modified in place.
+        league: The league adapter supplying the defaults.
+    """
+    for name, default in (
+        ("ridge", league.default_ridge),
+        ("prior_retention", league.default_prior_retention),
+    ):
+        if getattr(args, name, None) is None and hasattr(args, name):
+            setattr(args, name, default)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point.
 
@@ -246,6 +259,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     league = get_league(args.league)
     season = args.season if args.season is not None else league.current_season()
+    _apply_league_defaults(args, league)
 
     try:
         if args.command == "rate":
@@ -270,10 +284,13 @@ def _command_rate(args: argparse.Namespace, league: Any, season: Any) -> int:
         print(f"no completed {league.name.upper()} games found for {season}")
         return 1
 
-    result = solve_massey([game.to_game() for game in games], ridge=args.ridge)
+    prior, prior_meta = _build_prior(args, league, season)
+    result = solve_massey(
+        [game.to_game() for game in games], ridge=args.ridge, prior=prior
+    )
     table = ratings_table(result)
 
-    print(_rate_header(league, season, games, result, args))
+    print(_rate_header(league, season, games, result, args, prior_meta))
     print()
     print(format_ratings_table(table, units=league.margin_units))
 
@@ -292,18 +309,25 @@ def _command_backtest(args: argparse.Namespace, league: Any, season: Any) -> int
         print(f"no completed {league.name.upper()} games found for {season}")
         return 1
 
+    prior, prior_meta = _build_prior(args, league, season)
     config = BacktestConfig(
         ridge=args.ridge,
         skip_weeks=args.skip_weeks if args.skip_weeks is not None else league.default_skip_weeks,
         skip_games=args.skip_games if args.skip_games is not None else league.default_skip_games,
         refit=args.refit,
         logistic_scale=league.default_logistic_scale,
+        prior=prior,
     )
     summary, predictions = run_backtest(
         games, league=league.name, season=str(season), config=config
     )
 
     print(format_backtest_summary(summary, units=league.margin_units))
+    if prior_meta:
+        print(
+            f"  prior               : {prior_meta['season']} ratings x "
+            f"{prior_meta['retention']:g}"
+        )
 
     if not args.no_save:
         paths = _save_backtest(summary, predictions, league, season, args)
@@ -339,8 +363,17 @@ def _command_export(args: argparse.Namespace, league: Any, seasons: Any) -> int:
             )
             continue
 
+        prior, prior_meta = _build_prior(args, league, season)
+        if config is not None:
+            config = replace(config, prior=prior)
         payload = build_season_payload(
-            league, season, games, ridge=args.ridge, backtest_config=config
+            league,
+            season,
+            games,
+            ridge=args.ridge,
+            backtest_config=config,
+            prior=prior,
+            prior_meta=prior_meta,
         )
         payloads.append(payload)
 
@@ -383,6 +416,65 @@ def _command_inspect(args: argparse.Namespace, league: Any, season: Any) -> int:
 # --------------------------------------------------------------------------- #
 # Loading
 # --------------------------------------------------------------------------- #
+
+def _build_prior(
+    args: argparse.Namespace,
+    league: Any,
+    season: Any,
+) -> tuple[dict[str, float] | None, dict[str, Any]]:
+    """Fit the previous season and regress it, for use as this season's prior.
+
+    Nothing here leaks: the preceding season finished before this one started,
+    so its ratings are legitimate prior information for every game of it.
+
+    A missing or unreadable previous season is reported and then ignored --
+    being unable to improve the fit is no reason to refuse to produce one.
+
+    Args:
+        args: Parsed command-line arguments.
+        league: The league adapter.
+        season: The season being rated.
+
+    Returns:
+        ``(prior, metadata)``. Both are empty when the feature is switched off
+        or the previous season could not be loaded.
+    """
+    retention = getattr(args, "prior_retention", 0.0)
+    if not retention:
+        return None, {}
+
+    previous = league.previous_season(season)
+    try:
+        games = league.load_games(
+            previous,
+            include_playoffs=args.include_playoffs,
+            cache_dir=args.cache_dir,
+            # A finished season never changes, so --refresh has nothing to gain
+            # here and would cost another full pull.
+            refresh=False,
+        )
+    except Exception as error:  # noqa: BLE001 - any failure here is non-fatal
+        print(
+            f"warning: could not load {league.name.upper()} {previous} for the prior "
+            f"({error}); fitting without one",
+            file=sys.stderr,
+        )
+        return None, {}
+
+    if not games:
+        print(
+            f"warning: no completed {league.name.upper()} {previous} games for the "
+            "prior; fitting without one",
+            file=sys.stderr,
+        )
+        return None, {}
+
+    fitted = solve_massey([game.to_game() for game in games], ridge=args.ridge)
+    return (
+        carry_over_prior(fitted, retention),
+        {"season": str(previous), "retention": retention, "games": fitted.n_games},
+    )
+
 
 def _load_games(
     args: argparse.Namespace,
@@ -451,6 +543,7 @@ def _rate_header(
     games: Sequence[GameRecord],
     result: MasseyResult,
     args: argparse.Namespace,
+    prior_meta: dict[str, Any] | None = None,
 ) -> str:
     """Build the metadata block printed above the ratings table."""
     neutral = sum(1 for game in games if game.neutral)
@@ -468,6 +561,12 @@ def _rate_header(
         f"  ridge penalty       : {result.ridge:g}",
         f"  in-sample margin MAE: {result.residual_mae:.3f} {league.margin_units}",
     ]
+    if prior_meta:
+        lines.append(
+            f"  prior               : {prior_meta['season']} ratings x "
+            f"{prior_meta['retention']:g} ({prior_meta['games']} games), "
+            f"{result.prior_teams} teams matched"
+        )
     if cutoff:
         lines.append(f"  cutoff              : {', and '.join(cutoff)}")
     if league.name == "nfl":

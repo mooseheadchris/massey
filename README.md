@@ -38,6 +38,10 @@ python -m massey.cli rate --league nhl --season 2025 --as-of 2026-01-15
 python -m massey.cli backtest --league nfl --season 2025
 python -m massey.cli backtest --league nhl --season 2025
 
+# Turn the carry-over prior off, or change how much of last season survives
+python -m massey.cli rate --league nfl --prior-retention 0
+python -m massey.cli rate --league nfl --prior-retention 0.3 --ridge 10
+
 # Build a browser page (see "Viewing in a browser")
 python -m massey.cli export --league nfl --season 2026 2025 2024
 python -m massey.cli export --league nhl --season 2025
@@ -94,6 +98,58 @@ One consequence worth knowing: because HFA is unpenalised, with very little
 data it absorbs the average home margin before the ratings move at all. Fit a
 single game and you get `hfa = margin`, both ratings zero. That is the intended
 behaviour — a lone result should not read as a huge rating gap.
+
+### Carry-over prior
+
+By default the ratings are shrunk toward **half of last season's final
+ratings** rather than toward zero. Teams change over an offseason, so last
+season is evidence about this one rather than a starting point to take at face
+value; `--prior-retention` sets how much of it survives (`0` switches it off).
+
+Mechanically this is the same ridge penalty aimed somewhere else. Minimising
+`‖Xb − y‖² + λ‖b − p‖²` instead of `‖Xb − y‖² + λ‖b‖²` gives
+`(XᵀX + λI)b = Xᵀy + λp`, so the left-hand side never changes and the target
+simply gains `λp`. The home-field term is untouched: its ridge penalty is zero,
+which multiplies away whatever the prior holds in that slot.
+
+The effect is self-limiting. λ behaves like λ pseudo-games pulling toward the
+prior, so a team with one game played is roughly a 50/50 blend at λ=10 in week
+1, and the prior is nearly irrelevant by week 15. Nothing schedules that; it
+falls out of the arithmetic. A team absent from the prior — an expansion club —
+is shrunk toward zero, which is to say toward average, and a team in the prior
+that played no games is ignored.
+
+Since fitted ratings sum to zero, scaling them keeps that true, so the prior
+never fights the sum-to-zero constraint.
+
+### Where the defaults came from
+
+`--ridge` and `--prior-retention` default to each league's own values, because
+how much to shrink depends on how many games a league plays. The NFL's were
+measured by walk-forward backtest over 2021–25, scoring every game from week 1
+(`--skip-weeks 0`) so the early-season window was actually visible:
+
+| ridge | retention | wk 1–4 MAE | wk 1–4 acc | full MAE | full acc |
+| ----: | --------: | ---------: | ---------: | -------: | -------: |
+|     1 |       0.0 |     12.568 |      0.502 |   10.987 |    0.604 |
+|     1 |       0.5 |     12.336 |      0.490 |   10.949 |    0.606 |
+|    10 |       0.0 |     11.113 |      0.490 |   10.473 |    0.602 |
+| **10** | **0.5** | **10.636** | **0.611** | **10.343** | **0.639** |
+|    30 |       0.5 |     10.513 |      0.619 |   10.485 |    0.633 |
+
+Two things are worth taking from that table. The ridge mattered more than the
+prior did — 1 was simply a bad default. And the two interact strongly: at
+ridge 1 the prior is nearly inert, because λ/(λ+n) barely pulls. Tune them
+together or not at all.
+
+Weeks 1–4 moved from 0.502, *below* the 0.527 home-team baseline, to 0.611,
+clearly above it. That window is the whole point of the prior.
+
+The NHL's defaults are **not tuned** — no season of real NHL results has been
+run through a backtest yet, so it keeps ridge 1 and no prior. Ridge is
+scale-invariant in this formulation, so the NFL's value is not obviously wrong
+for hockey, but the NHL plays 82 games to the NFL's 17, and that changes how
+much a given penalty shrinks. Sweep it once you have a season cached.
 
 ## Margins
 
@@ -198,14 +254,18 @@ NFL, default settings (ridge 1.0, 3 warm-up weeks, 224 games scored):
 
 | Season | Accuracy | Home baseline |   Edge | Margin MAE | Mean HFA |
 | -----: | -------: | ------------: | -----: | ---------: | -------: |
-|   2023 |    59.8% |         57.6% | +2.2pt |      11.00 |     1.52 |
-|   2024 |    68.8% |         54.0% | +14.7  |      10.68 |     1.20 |
-|   2025 |    59.6% |         52.9% | +6.7   |      10.65 |     2.96 |
+|   2023 |    61.6% |         57.6% | +4.0pt |      10.33 |     1.58 |
+|   2024 |    69.6% |         54.0% | +15.6  |      10.00 |     1.34 |
+|   2025 |    58.3% |         52.9% | +5.4   |      10.60 |     2.79 |
 
 Beating the home-team baseline every season, by a margin that varies a lot
-year to year. A ~10.7-point margin MAE is about what a pure
+year to year. A ~10.3-point margin MAE is about what a pure
 points-differential model gets; closing that gap is what an efficiency model
 (EPA) would be for.
+
+These use the default three-week warm-up, which skips exactly the window the
+carry-over prior does most of its work in -- see below for what it is worth
+there.
 
 No NHL figures are listed here yet: the field names are confirmed against a
 live payload, but no full season has been pulled and backtested.
@@ -312,7 +372,7 @@ massey/
   cli.py               argument parsing, console tables, CSV/JSON output
   web.py               builds the page payload and renders the HTML
   templates/           the page itself: one file, no external dependencies
-tests/                 182 tests; see below
+tests/                 208 tests; see below
 data/raw/              cached raw pulls (gitignored)
 output/                generated CSV and JSON (gitignored)
 ```
@@ -323,7 +383,7 @@ output/                generated CSV and JSON (gitignored)
 pytest -q
 ```
 
-182 tests, no network access required — the league tests seed the cache and run
+208 tests, no network access required — the league tests seed the cache and run
 the real loaders against it.
 
 - `test_massey.py` — the solver against a synthetic four-team league with known
@@ -364,6 +424,9 @@ beside it:
 
 - **Elo** — a new module in `models/`, driven from the same `GameRecord` list
   the backtest already walks in chronological order.
+- **Time decay** — weighted least squares. `(XᵀWX + λI)b = XᵀWy`, so it is two
+  lines in `_solve_constrained_ridge` plus a per-game weight, in the same
+  place the carry-over prior already hooks in.
 - **EPA (NFL) / xG (NHL)** — a new `margin` definition in the league adapter.
   Swap point differential for an efficiency-based margin and the solver needs
   no changes at all; `GameRecord` already carries the raw scores alongside the

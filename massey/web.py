@@ -17,7 +17,7 @@ import json
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from massey.backtest import BacktestConfig, GamePrediction, run_backtest
 from massey.leagues.base import GameRecord
@@ -37,6 +37,8 @@ def build_season_payload(
     *,
     ridge: float = DEFAULT_RIDGE,
     backtest_config: BacktestConfig | None = None,
+    prior: Mapping[str, float] | None = None,
+    prior_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble everything the page shows for one season.
 
@@ -47,6 +49,8 @@ def build_season_payload(
         ridge: Ridge penalty for the full-season fit.
         backtest_config: When given, a walk-forward backtest is run and its
             metrics and per-game predictions are included.
+        prior: Ratings to shrink toward instead of zero.
+        prior_meta: What that prior was built from, for the page to display.
 
     Returns:
         A JSON-serialisable payload.
@@ -58,7 +62,9 @@ def build_season_payload(
         raise ValueError(f"no completed {league.name.upper()} games for {season}")
 
     ordered = sorted(games, key=lambda record: (record.date, record.game_id))
-    result = solve_massey([record.to_game() for record in ordered], ridge=ridge)
+    result = solve_massey(
+        [record.to_game() for record in ordered], ridge=ridge, prior=prior
+    )
 
     summary = None
     predictions: list[GamePrediction] = []
@@ -90,6 +96,9 @@ def build_season_payload(
             "ridge": result.ridge,
             "in_sample_mae": result.residual_mae,
             "logistic_scale": scale,
+            "prior_season": (prior_meta or {}).get("season"),
+            "prior_retention": (prior_meta or {}).get("retention"),
+            "prior_teams": result.prior_teams,
             "generated_at": date.today().isoformat(),
         },
         "teams": [

@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from itertools import groupby
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -53,6 +53,12 @@ class BacktestConfig:
             out-of-sample predictions have accumulated.
         min_calibration_games: How many out-of-sample predictions to collect
             before fitting the logistic scale from the data.
+        prior: Ratings to shrink toward at every refit, normally the previous
+            season regressed toward the mean. It is fixed for the whole run:
+            the preceding season ended before this one began, so it leaks
+            nothing into any prediction. Note that the first batch of games
+            still goes unscored, because a fit needs at least one game -- with
+            per-day refitting that is only the season's opening day.
     """
 
     ridge: float = DEFAULT_RIDGE
@@ -61,6 +67,7 @@ class BacktestConfig:
     refit: str = "per-day"
     logistic_scale: float = 0.13
     min_calibration_games: int = 50
+    prior: Mapping[str, float] | None = None
 
     def __post_init__(self) -> None:
         if self.refit not in REFIT_CADENCES:
@@ -192,7 +199,11 @@ def run_backtest(
     position = 0
 
     for batch in _batches(ordered, config.refit):
-        result = solve_massey(history, ridge=config.ridge) if history else None
+        result = (
+            solve_massey(history, ridge=config.ridge, prior=config.prior)
+            if history
+            else None
+        )
         if result is not None:
             fitted_hfas.append(result.hfa)
         scale = _logistic_scale(calibration, config)

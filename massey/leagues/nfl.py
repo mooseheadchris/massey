@@ -34,6 +34,16 @@ margin_units = "points"
 default_skip_weeks: int | None = 3
 default_skip_games: int | None = None
 
+#: Ridge penalty and carry-over retention used when the command line does not
+#: override them. Both were measured by walk-forward backtest over the 2021-25
+#: seasons rather than guessed: ridge 10 with half of last season carried over
+#: beat an unpenalised-ish ridge of 1 with no prior by about 3.5 points of
+#: winner accuracy and 0.64 points of margin error, and lifted weeks 1-4 from
+#: below the home-team baseline to clearly above it. They interact -- at ridge
+#: 1 the prior barely pulls at all -- so retune them together, not separately.
+default_ridge = 10.0
+default_prior_retention = 0.5
+
 #: Starting logistic scale for turning a predicted point margin into a home
 #: win probability, used only until the backtest has enough out-of-sample
 #: predictions to fit its own scale.
@@ -74,6 +84,24 @@ def current_season() -> int:
         logger.debug("nflreadpy.get_current_season() unavailable; using date math")
         today = date.today()
         return today.year if today.month >= 3 else today.year - 1
+
+
+def previous_season(season: int | str) -> int:
+    """Return the season before this one, for building a carry-over prior.
+
+    Args:
+        season: Season year.
+
+    Returns:
+        The preceding season year.
+
+    Raises:
+        ValueError: If ``season`` is not a year.
+    """
+    try:
+        return int(season) - 1
+    except (TypeError, ValueError):
+        raise ValueError(f"cannot read {season!r} as an NFL season year") from None
 
 
 def load_schedule_frame(

@@ -192,3 +192,13 @@ def test_loader_does_not_touch_the_network_when_cached(nfl_cache: Path, monkeypa
 
     monkeypatch.setattr(nfl, "with_retry", explode)
     assert nfl.load_games(2025, cache_dir=nfl_cache)
+
+
+def test_previous_season_steps_back_one_year():
+    assert nfl.previous_season(2026) == 2025
+    assert nfl.previous_season("2026") == 2025
+
+
+def test_previous_season_rejects_a_non_year():
+    with pytest.raises(ValueError, match="NFL season year"):
+        nfl.previous_season("twenty-six")

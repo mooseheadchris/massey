@@ -128,6 +128,27 @@ def nhl_full_cache(tmp_path: Path) -> Path:
     return tmp_path / "raw"
 
 
+def write_nfl_season(cache_root: Path, season: int) -> None:
+    """Seed one NFL season into a cache, reusing the miniature schedule."""
+    rows = [
+        (game_id.replace("2025", str(season), 1), game_type, week,
+         gameday.replace("2025", str(season), 1).replace("2026", str(season + 1), 1),
+         away, away_score, home, home_score, location, overtime)
+        for (game_id, game_type, week, gameday, away, away_score, home,
+             home_score, location, overtime) in NFL_SCHEDULE_ROWS
+    ]
+    frame = pd.DataFrame(
+        rows,
+        columns=[
+            "game_id", "game_type", "week", "gameday", "away_team", "away_score",
+            "home_team", "home_score", "location", "overtime",
+        ],
+    )
+    target = cache_root / "nfl"
+    target.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(target / f"schedules_{season}.parquet", index=False)
+
+
 @pytest.fixture
 def nfl_cache(tmp_path: Path) -> Path:
     """A raw-data cache pre-seeded with a miniature 2025 NFL schedule.
@@ -137,22 +158,20 @@ def nfl_cache(tmp_path: Path) -> Path:
     Returns:
         The cache root to pass as ``cache_dir``.
     """
-    frame = pd.DataFrame(
-        NFL_SCHEDULE_ROWS,
-        columns=[
-            "game_id",
-            "game_type",
-            "week",
-            "gameday",
-            "away_team",
-            "away_score",
-            "home_team",
-            "home_score",
-            "location",
-            "overtime",
-        ],
-    )
-    target = tmp_path / "raw" / "nfl"
-    target.mkdir(parents=True)
-    frame.to_parquet(target / "schedules_2025.parquet", index=False)
+    write_nfl_season(tmp_path / "raw", 2025)
+    return tmp_path / "raw"
+
+
+@pytest.fixture
+def nfl_cache_with_history(tmp_path: Path) -> Path:
+    """An NFL cache holding 2025 and the 2024 season before it.
+
+    Needed by anything that builds a carry-over prior, which loads the
+    preceding season -- without this it would reach for the network.
+
+    Returns:
+        The cache root to pass as ``cache_dir``.
+    """
+    write_nfl_season(tmp_path / "raw", 2024)
+    write_nfl_season(tmp_path / "raw", 2025)
     return tmp_path / "raw"

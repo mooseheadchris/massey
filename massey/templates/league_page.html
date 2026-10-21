@@ -652,10 +652,13 @@ function renderAll() {
     ? "Predictions are walk-forward: each game was predicted from games played before it. The first " +
       (b.n_warmup_skipped || 0) + " were warm-up and not scored."
     : "Exported without a backtest, so there are no predictions to compare.";
+  const prior = current.meta.prior_season
+    ? " · shrunk toward " + current.meta.prior_season + " ratings × " +
+      current.meta.prior_retention
+    : "";
   $("footer").textContent = "Generated " + current.meta.generated_at +
-    " by massey · ridge " + current.meta.ridge +
-    " · win probabilities use a logistic scale of " + current.meta.logistic_scale.toFixed(3) +
-    (b ? " fitted during the backtest" : " (league default, no backtest run)");
+    " by massey · ridge " + current.meta.ridge + prior +
+    " · win probabilities use a logistic scale of " + current.meta.logistic_scale.toFixed(3);
 
   renderSeasonOptions();
   renderTiles();

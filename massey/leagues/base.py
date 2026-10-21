@@ -85,9 +85,17 @@ class LeagueAdapter(Protocol):
     #: Starting logistic scale for win probabilities, used until the backtest
     #: has enough out-of-sample predictions to fit its own.
     default_logistic_scale: float
+    #: Ridge penalty used when the command line does not override it.
+    default_ridge: float
+    #: Fraction of the previous season's ratings to shrink toward by default.
+    #: ``0.0`` switches the carry-over prior off.
+    default_prior_retention: float
 
     def current_season(self) -> int:
         """Return the season that is current today, in CLI form."""
+
+    def previous_season(self, season: int | str) -> int:
+        """Return the season before ``season``, for a carry-over prior."""
 
     def load_games(
         self,

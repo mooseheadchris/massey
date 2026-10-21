@@ -7,7 +7,13 @@ import itertools
 import numpy as np
 import pytest
 
-from massey.models import Game, MasseyResult, predict_margin, solve_massey
+from massey.models import (
+    Game,
+    MasseyResult,
+    carry_over_prior,
+    predict_margin,
+    solve_massey,
+)
 
 # A tiny synthetic league with known ratings (they sum to zero) and a known
 # home-field advantage. Every pair meets twice, once at each venue, which makes
@@ -193,6 +199,139 @@ def test_predict_margin_unknown_team_raises():
     result = solve_massey(synthetic_games())
     with pytest.raises(KeyError, match="Sharks"):
         predict_margin(result, "Sharks", "Aces")
+
+
+# --------------------------------------------------------------------------- #
+# Shrinking toward a prior instead of toward zero
+# --------------------------------------------------------------------------- #
+
+def test_prior_does_nothing_without_a_ridge():
+    # The prior rides on the ridge penalty, so switching the penalty off
+    # switches the prior off with it.
+    absurd = {team: 500.0 for team in TRUE_RATINGS}
+    with_prior = solve_massey(synthetic_games(), ridge=0.0, prior=absurd)
+    without = solve_massey(synthetic_games(), ridge=0.0)
+
+    assert with_prior.ratings == pytest.approx(without.ratings)
+
+
+def test_prior_pulls_ratings_toward_itself():
+    games = synthetic_games()
+    plain = solve_massey(games, ridge=20.0)
+    # A prior that disagrees with the data: reverse the true order.
+    reversed_prior = {team: -rating for team, rating in TRUE_RATINGS.items()}
+    pulled = solve_massey(games, ridge=20.0, prior=reversed_prior)
+
+    for team in TRUE_RATINGS:
+        assert pulled.ratings[team] < plain.ratings[team] if TRUE_RATINGS[team] > 0 \
+            else pulled.ratings[team] > plain.ratings[team]
+
+
+def test_a_heavy_ridge_lands_close_to_the_prior():
+    # With little weight on the data, the fit should sit near the prior. This
+    # is the behaviour that makes early-season ratings sane.
+    prior = {"Aces": 6.0, "Bears": 2.0, "Cubs": -2.0, "Ducks": -6.0}
+    result = solve_massey([Game("Aces", "Ducks", 1.0)], ridge=500.0, prior=prior)
+
+    for team in ("Aces", "Ducks"):
+        assert result.ratings[team] == pytest.approx(prior[team], abs=0.3)
+
+
+def test_evidence_outweighs_the_prior_as_games_accumulate():
+    # One game barely moves off the prior; a full double round-robin should
+    # leave it behind.
+    prior = {team: -rating for team, rating in TRUE_RATINGS.items()}
+    sparse = solve_massey([Game("Aces", "Ducks", 20.0)], ridge=5.0, prior=prior)
+    dense = solve_massey(synthetic_games(), ridge=5.0, prior=prior)
+
+    # The prior says Aces is the worst team; plenty of evidence says otherwise.
+    assert sparse.ratings["Aces"] < 0
+    assert dense.ratings["Aces"] > 0
+
+
+def test_prior_leaves_hfa_free():
+    games = synthetic_games()
+    prior = {team: -rating for team, rating in TRUE_RATINGS.items()}
+
+    without = solve_massey(games, ridge=10.0)
+    with_prior = solve_massey(games, ridge=10.0, prior=prior)
+
+    # HFA carries no ridge penalty, so the prior cannot reach it.
+    assert with_prior.hfa == pytest.approx(without.hfa)
+
+
+def test_ratings_still_sum_to_zero_under_a_lopsided_prior():
+    # A prior that does not itself sum to zero must not break the constraint.
+    result = solve_massey(synthetic_games(), ridge=10.0, prior={"Aces": 100.0})
+    assert sum(result.ratings.values()) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_team_missing_from_the_prior_is_treated_as_average():
+    # An expansion team has no history, and "average" is the right assumption.
+    prior = {"Aces": 9.0}
+    result = solve_massey(synthetic_games(), ridge=25.0, prior=prior)
+
+    assert result.ratings["Aces"] > TRUE_RATINGS["Aces"] * 0.2
+    assert result.prior_teams == 1
+
+
+def test_a_prior_team_that_never_played_is_ignored():
+    # A relocated or folded club in last season's ratings must not create a
+    # column, or ask the API for a schedule that does not exist.
+    prior = {**TRUE_RATINGS, "Gone": 50.0}
+    result = solve_massey(synthetic_games(), ridge=1.0, prior=prior)
+
+    assert "Gone" not in result.ratings
+    assert result.prior_teams == len(TRUE_RATINGS)
+
+
+def test_empty_prior_is_the_same_as_none():
+    games = synthetic_games()
+    assert solve_massey(games, prior={}).ratings == pytest.approx(
+        solve_massey(games).ratings
+    )
+    assert solve_massey(games, prior={}).prior_teams == 0
+
+
+def test_non_finite_prior_is_rejected():
+    # A NaN survives multiplication by a zero penalty and would spread through
+    # the entire solve, so it has to be caught at the door.
+    for bad in (float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="not finite"):
+            solve_massey(synthetic_games(), prior={"Aces": bad})
+
+
+def test_carry_over_prior_regresses_toward_the_mean():
+    fitted = solve_massey(synthetic_games(), ridge=0.0)
+    prior = carry_over_prior(fitted, 0.3)
+
+    for team, rating in fitted.ratings.items():
+        assert prior[team] == pytest.approx(0.3 * rating)
+    # Scaling preserves sum-to-zero, so the prior agrees with the constraint.
+    assert sum(prior.values()) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_carry_over_prior_at_zero_retention_forgets_last_season():
+    fitted = solve_massey(synthetic_games(), ridge=0.0)
+    prior = carry_over_prior(fitted, 0.0)
+
+    assert all(value == 0.0 for value in prior.values())
+    # Which makes it equivalent to an ordinary fit.
+    assert solve_massey(synthetic_games(), prior=prior).ratings == pytest.approx(
+        solve_massey(synthetic_games()).ratings
+    )
+
+
+def test_carry_over_prior_at_full_retention_keeps_last_season():
+    fitted = solve_massey(synthetic_games(), ridge=0.0)
+    assert carry_over_prior(fitted, 1.0) == pytest.approx(fitted.ratings)
+
+
+@pytest.mark.parametrize("retention", [-0.1, 1.5])
+def test_carry_over_prior_rejects_a_nonsense_retention(retention):
+    fitted = solve_massey(synthetic_games())
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        carry_over_prior(fitted, retention)
 
 
 def _ranking(result: MasseyResult) -> list[str]:

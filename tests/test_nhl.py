@@ -382,3 +382,9 @@ def test_inspect_season_samples_a_regular_season_game(nhl_cache: Path):
 def test_unreadable_game_type_excludes_the_game_without_raising():
     assert nhl._to_record({"id": 1, "gameType": "exhibition"}, {2}) is None
     assert nhl._to_record({"id": 1}, {2}) is None
+
+
+def test_previous_season_steps_back_one_year():
+    assert nhl.previous_season(2026) == 2025
+    assert nhl.previous_season("20262027") == 2025
+    assert nhl.season_id(nhl.previous_season(2026)) == "20252026"
