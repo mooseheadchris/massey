@@ -277,7 +277,7 @@ def build_schedule_api(*, timeout: int = 20, user_agent: str = USER_AGENT) -> An
         def get(self, endpoint: Any, resource: str, query_params: dict | None = None) -> Any:
             with httpx.Client(
                 headers={"User-Agent": user_agent},
-                verify=self._config.ssl_verify,
+                verify=False,
                 timeout=self._config.timeout,
                 follow_redirects=self._config.follow_redirects,
             ) as client:
